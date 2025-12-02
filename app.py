@@ -52,24 +52,58 @@ if 'servo_controller' not in st.session_state:
     st.session_state.measurements = []
     st.session_state.recording = False
     st.session_state.frames_buffer = []
+    st.session_state.video_file = None
+    st.session_state.current_frame_idx = 0
 
 # ========== FUNCIONES AUXILIARES ==========
 def init_hardware():
-    # Inicializa hardware (Arduino + Cámara)
+    """Inicializa hardware (Arduino + Cámara) y muestra estado real de conexión"""
     with st.spinner("Conectando hardware..."):
+        arduino_ok = False
+        camera_ok = False
+        messages = []
+        
+        # Intentar conectar Arduino
         try:
-            # Arduino (ajustar puerto según SO)
             port = '/dev/ttyUSB0' if os.name != 'nt' else 'COM3'
             st.session_state.servo_controller = ServoController(port=port)
-
-            # Cámara
-            st.session_state.camera = VideoCapture(camera_id=0)
-
-            st.success("✅ Hardware conectado correctamente")
-            return True
+            if st.session_state.servo_controller.connected:
+                arduino_ok = True
+                messages.append("✅ Arduino conectado correctamente")
+            else:
+                messages.append("❌ Arduino: No se pudo establecer conexión")
         except Exception as e:
-            st.error(f"❌ Error al conectar hardware: {e}")
-            return False
+            messages.append(f"❌ Arduino: {e}")
+            st.session_state.servo_controller = None
+        
+        # Intentar conectar Cámara
+        try:
+            st.session_state.camera = VideoCapture(camera_id=0)
+            if st.session_state.camera.cap.isOpened():
+                camera_ok = True
+                messages.append("✅ Cámara conectada correctamente")
+            else:
+                messages.append("❌ Cámara: No se detectó ninguna cámara")
+                st.session_state.camera = None
+        except Exception as e:
+            messages.append(f"❌ Cámara: {e}")
+            st.session_state.camera = None
+        
+        # Mostrar resultados
+        for msg in messages:
+            if msg.startswith("✅"):
+                st.success(msg)
+            else:
+                st.error(msg)
+        
+        if arduino_ok and camera_ok:
+            st.success("🎉 Todo el hardware conectado correctamente")
+        elif arduino_ok or camera_ok:
+            st.warning("⚠️ Hardware parcialmente conectado")
+        else:
+            st.error("❌ No se pudo conectar ningún hardware")
+        
+        return arduino_ok or camera_ok
 
 def capture_and_analyze_frame():
     # Captura frame y realiza análisis FFT
@@ -100,6 +134,59 @@ def capture_and_analyze_frame():
         "fft_result": fft_result,
         "interference_result": interference_result
     }
+
+def analyze_frame(frame: np.ndarray, timestamp: float = 0.0) -> dict:
+    """Analiza un frame de video y retorna resultados"""
+    # Convertir a escala de grises si es necesario
+    if len(frame.shape) == 3:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = frame
+
+    # Análisis FFT
+    analyzer = WaveAnalyzer(calibration_pixel_per_mm=10.0)
+    fft_result = analyzer.estimate_wavelength(gray)
+
+    # Análisis de Interferencia
+    interference_analyzer = InterferenceAnalyzer()
+    interference_result = interference_analyzer.analyze_interference(gray)
+
+    return {
+        "frame": frame,
+        "gray": gray,
+        "timestamp": timestamp,
+        "fft_result": fft_result,
+        "interference_result": interference_result
+    }
+
+def load_video_frame(video_bytes, frame_idx: int = 0):
+    """Carga un frame específico de un video"""
+    import tempfile
+    
+    # Guardar video temporalmente
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
+        tmp.write(video_bytes)
+        tmp_path = tmp.name
+    
+    cap = cv2.VideoCapture(tmp_path)
+    
+    if not cap.isOpened():
+        os.unlink(tmp_path)
+        return None, 0, 0
+    
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    
+    # Ir al frame específico
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    ret, frame = cap.read()
+    
+    cap.release()
+    os.unlink(tmp_path)
+    
+    if ret:
+        return frame, total_frames, fps
+    return None, total_frames, fps
 
 # ========== INTERFAZ PRINCIPAL ==========
 st.markdown('<div class="header-main">🌊 Tanque de Ondas Inteligente</div>', unsafe_allow_html=True)
@@ -147,10 +234,33 @@ with st.sidebar:
         result = capture_and_analyze_frame()
         st.session_state.frames_buffer = [result] if result else []
 
-    if st.button("🎬 Cargar Video", use_container_width=True):
-        uploaded_file = st.file_uploader("Selecciona video", type=['mp4', 'avi', 'mov'])
-        if uploaded_file:
-            st.success("Video cargado")
+    st.divider()
+    st.subheader("🎬 Cargar Video")
+    
+    uploaded_file = st.file_uploader("Selecciona un video", type=['mp4', 'avi', 'mov'], key="video_uploader")
+    
+    if uploaded_file is not None:
+        st.session_state.video_file = uploaded_file.getvalue()
+        
+        # Obtener info del video
+        frame, total_frames, fps = load_video_frame(st.session_state.video_file, 0)
+        
+        if frame is not None and total_frames > 0:
+            st.success(f"✅ Video cargado: {total_frames} frames @ {fps:.1f} FPS")
+            
+            # Slider para seleccionar frame
+            frame_idx = st.slider("Seleccionar frame", 0, max(0, total_frames - 1), 0, key="frame_slider")
+            
+            if st.button("🔍 Analizar Frame Seleccionado", use_container_width=True):
+                with st.spinner("Analizando..."):
+                    frame, _, _ = load_video_frame(st.session_state.video_file, frame_idx)
+                    if frame is not None:
+                        timestamp = frame_idx / fps * 1000 if fps > 0 else 0
+                        result = analyze_frame(frame, timestamp)
+                        st.session_state.frames_buffer = [result]
+                        st.rerun()
+        else:
+            st.error("❌ Error al cargar el video")
 
 # ========== MAIN - VISUALIZACIÓN ==========
 st.header("📊 Panel de Análisis")
@@ -162,15 +272,15 @@ with col1:
         result = st.session_state.frames_buffer[0]
 
         # Mostrar frame
-        st.image(result["frame"], caption="Frame Capturado", use_container_width=True)
+        st.image(result["frame"], caption="Imagen Capturada", use_container_width=True)
 
         # Resultados FFT
         fft_result = result["fft_result"]
         if fft_result["wavelength_mm"]:
-            st.success(f"✅ Wavelength Detectada: **{fft_result['wavelength_mm']:.2f} mm**")
+            st.success(f"✅ Longitud de Onda Detectada: **{fft_result['wavelength_mm']:.2f} mm**")
             st.write(f"SNR: {fft_result['snr']:.2f} | Confianza: {fft_result['confidence']:.1%}")
         else:
-            st.warning("No se detectó onda claramente")
+            st.warning("No se detectó un patrón de onda claro")
 
         # Resultados Interferencia
         interference_result = result["interference_result"]
@@ -186,9 +296,9 @@ with col2:
         result = st.session_state.frames_buffer[0]
         fft = result["fft_result"]
 
-        st.metric("Wavelength", 
+        st.metric("Longitud de Onda", 
                  f"{fft['wavelength_mm']:.2f} mm" if fft['wavelength_mm'] else "---")
-        st.metric("SNR", f"{fft['snr']:.2f}")
+        st.metric("Relación Señal/Ruido", f"{fft['snr']:.2f}")
         st.metric("Confianza", f"{fft['confidence']:.0%}")
 
 # ========== HISTORIAL ==========
@@ -209,8 +319,9 @@ else:
 st.divider()
 st.markdown('''
 ---
-**Autores:** Greidy Andrea Cárdenas Correa, Alexánder Mesa Gómez  
-**Universidad:** Universidad Tecnológica de Pereira  
+**Autores:** Greidy Andrea Cárdenas Correa y Alexánder Mesa Gómez  
+**Institución:** Universidad Tecnológica de Pereira  
 **Asignatura:** Física III  
+**Docente:** Sebastián Velásquez Bonilla  
 **Año:** 2025
 ''')
