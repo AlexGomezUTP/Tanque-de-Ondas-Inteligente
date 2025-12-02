@@ -1,8 +1,7 @@
-
-
+"""
 TANQUE DE ONDAS - CONTROL DE SERVO
 Interfaz Python para controlar Arduino via puerto serial
-
+"""
 
 import serial
 import time

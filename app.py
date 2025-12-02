@@ -1,8 +1,7 @@
-
-
+"""
 TANQUE DE ONDAS - APP STREAMLIT
 Interfaz web para control y análisis de experimento
-
+"""
 
 import streamlit as st
 import cv2
@@ -163,7 +162,7 @@ with col1:
         result = st.session_state.frames_buffer[0]
 
         # Mostrar frame
-        st.image(result["frame"], caption="Frame Capturado", use_column_width=True)
+        st.image(result["frame"], caption="Frame Capturado", use_container_width=True)
 
         # Resultados FFT
         fft_result = result["fft_result"]

@@ -1,12 +1,11 @@
-
-
+"""
 TANQUE DE ONDAS - ANÁLISIS DE FOURIER
 Análisis FFT 2D para medir longitud de onda
-
+"""
 
 import numpy as np
 from scipy.fft import fft2, fftshift
-from scipy import signal
+from scipy.signal import windows
 import logging
 from typing import Tuple, Dict, Optional
 
@@ -38,15 +37,15 @@ class WaveAnalyzer:
         image = (image - image.min()) / (image.max() - image.min() + 1e-8)
 
         # Aplicar ventana Hann para reducir artefactos
-        window = signal.hann(image.shape[0])[:, np.newaxis] * signal.hann(image.shape[1])[np.newaxis, :]
+        window = windows.hann(image.shape[0])[:, np.newaxis] * windows.hann(image.shape[1])[np.newaxis, :]
         image = image * window
 
         return image
 
-    def compute_fft2d(self, image: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def compute_fft2d(self, image: np.ndarray) -> np.ndarray:
         # Calcula FFT 2D
         # Returns:
-        #    (spectrum_power, frequencies_x, frequencies_y)
+        #    spectrum_power (desplazado con DC en el centro)
 
         # FFT 2D
         fft_result = fft2(image)
@@ -54,31 +53,33 @@ class WaveAnalyzer:
 
         # Espectro de potencia
         spectrum = np.abs(fft_shift) ** 2
-        spectrum = np.log1p(spectrum)  # Log para visualización
 
-        # Frecuencias
-        h, w = image.shape
-        fx = np.fft.fftfreq(w)
-        fy = np.fft.fftfreq(h)
+        return spectrum
 
-        return spectrum, fx, fy
-
-    def find_peak_frequency(self, spectrum: np.ndarray, fx: np.ndarray, fy: np.ndarray) -> Tuple[float, float, float]:
+    def find_peak_frequency(self, spectrum: np.ndarray) -> Tuple[float, float, float]:
         # Encuentra pico dominante en espectro
         # Returns:
-        #    (freq_x, freq_y, magnitude)
+        #    (freq_x, freq_y, magnitude) en ciclos/píxel
 
-        # Máscara central (excluye DC)
         h, w = spectrum.shape
+        center_y, center_x = h // 2, w // 2
+
+        # Máscara central (excluye DC y componentes muy bajas)
         mask = np.ones_like(spectrum)
-        mask[h//2-10:h//2+10, w//2-10:w//2+10] = 0
+        mask[center_y-5:center_y+5, center_x-5:center_x+5] = 0
 
         masked_spectrum = spectrum * mask
         peak_idx = np.unravel_index(np.argmax(masked_spectrum), masked_spectrum.shape)
 
         peak_value = spectrum[peak_idx]
-        freq_x = fx[peak_idx[1]]
-        freq_y = fy[peak_idx[0]]
+
+        # Calcular frecuencia desde la distancia al centro
+        # En el espectro desplazado, la frecuencia = distancia_al_centro / tamaño_imagen
+        dist_y = peak_idx[0] - center_y
+        dist_x = peak_idx[1] - center_x
+
+        freq_x = dist_x / w  # ciclos/píxel
+        freq_y = dist_y / h  # ciclos/píxel
 
         return freq_x, freq_y, peak_value
 
@@ -91,27 +92,31 @@ class WaveAnalyzer:
         processed = self.preprocess_image(image, downsample)
 
         # FFT
-        spectrum, fx, fy = self.compute_fft2d(processed)
+        spectrum = self.compute_fft2d(processed)
 
         # Encontrar pico
-        freq_x, freq_y, peak_mag = self.find_peak_frequency(spectrum, fx, fy)
+        freq_x, freq_y, peak_mag = self.find_peak_frequency(spectrum)
 
-        # Frecuencia espacial total
+        # Frecuencia espacial total (en ciclos/píxel del downsampled)
         spatial_freq = np.sqrt(freq_x**2 + freq_y**2)
 
         if spatial_freq < 1e-8:
-            return {"wavelength_mm": None, "snr": 0, "confidence": 0}
+            return {"wavelength_mm": None, "wavelength_px": None, "snr": 0, "confidence": 0, "spectrum": spectrum}
 
-        # Wavelength = 1 / spatial_freq (en píxeles)
-        wavelength_px = 1.0 / (spatial_freq + 1e-8)
+        # Wavelength en píxeles del downsampled
+        wavelength_px_downsampled = 1.0 / spatial_freq
 
-        # Convertir a mm
-        wavelength_mm = wavelength_px * (1.0 / self.calibration)
+        # Corregir por downsample para obtener wavelength en píxeles originales
+        wavelength_px = wavelength_px_downsampled * downsample
+
+        # Convertir a mm usando factor de calibración
+        # calibration_pixel_per_mm indica cuántos píxeles hay por mm
+        wavelength_mm = wavelength_px / self.calibration
 
         # SNR (relación pico/ruido)
         noise_level = np.median(spectrum)
         snr = peak_mag / (noise_level + 1e-8)
-        confidence = min(1.0, snr / 10.0)  # Normalizar a 0-1
+        confidence = min(1.0, snr / 100.0)  # Normalizar a 0-1
 
         return {
             "wavelength_mm": wavelength_mm,

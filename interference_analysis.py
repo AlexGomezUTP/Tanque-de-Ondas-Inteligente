@@ -1,8 +1,7 @@
-
-
+"""
 TANQUE DE ONDAS - ANÁLISIS DE INTERFERENCIA
 Detección de patrones de franjas de interferencia
-
+"""
 
 import numpy as np
 from scipy import ndimage

@@ -1,8 +1,7 @@
-
-
+"""
 TANQUE DE ONDAS - CAPTURA DE VIDEO
 Módulo para capturar y procesar video de la cámara
-
+"""
 
 import cv2
 import numpy as np
