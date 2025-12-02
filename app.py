@@ -30,17 +30,268 @@ st.set_page_config(
 # ========== ESTILOS PERSONALIZADOS ==========
 st.markdown('''
 <style>
-    .header-main {
-        font-size: 2.5em;
-        color: #0066cc;
-        text-align: center;
-        margin-bottom: 20px;
+    /* Importar fuentes de Google */
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
+    
+    /* Variables de color */
+    :root {
+        --primary-color: #0066cc;
+        --secondary-color: #00a8e8;
+        --accent-color: #00c9ff;
+        --success-color: #00d084;
+        --warning-color: #ffb800;
+        --error-color: #ff4b6e;
+        --dark-bg: #1a1a2e;
+        --light-bg: #f5f7fa;
+        --card-bg: #ffffff;
+        --text-primary: #2d3436;
+        --text-secondary: #636e72;
     }
+    
+    /* Estilo general */
+    .main {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background-attachment: fixed;
+    }
+    
+    /* Header principal con gradiente */
+    .header-main {
+        font-family: 'Poppins', sans-serif;
+        font-size: 3em;
+        font-weight: 700;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-align: center;
+        margin-bottom: 10px;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .subtitle {
+        font-family: 'Poppins', sans-serif;
+        font-size: 1.2em;
+        color: var(--text-secondary);
+        text-align: center;
+        margin-bottom: 30px;
+        font-weight: 300;
+    }
+    
+    /* Sidebar mejorado */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #2d3436 0%, #1a1a2e 100%);
+        padding: 20px;
+    }
+    
+    section[data-testid="stSidebar"] h1, 
+    section[data-testid="stSidebar"] h2, 
+    section[data-testid="stSidebar"] h3,
+    section[data-testid="stSidebar"] label {
+        color: #ffffff !important;
+        font-family: 'Poppins', sans-serif;
+    }
+    
+    section[data-testid="stSidebar"] p {
+        color: #b2bec3 !important;
+    }
+    
+    /* Tarjetas con sombra y hover */
+    .element-container {
+        transition: transform 0.3s ease;
+    }
+    
     .metric-box {
-        background-color: #f0f2f6;
-        padding: 15px;
-        border-radius: 8px;
+        background: var(--card-bg);
+        padding: 20px;
+        border-radius: 15px;
+        margin: 15px 0;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+        border-left: 4px solid var(--primary-color);
+        transition: all 0.3s ease;
+    }
+    
+    .metric-box:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 15px rgba(0, 0, 0, 0.15);
+    }
+    
+    /* Botones mejorados */
+    .stButton > button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        padding: 12px 24px;
+        font-family: 'Poppins', sans-serif;
+        font-weight: 600;
+        font-size: 0.95em;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 6px rgba(102, 126, 234, 0.3);
+        width: 100%;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(102, 126, 234, 0.4);
+    }
+    
+    .stButton > button:active {
+        transform: translateY(0);
+    }
+    
+    /* Métricas con estilo */
+    div[data-testid="stMetricValue"] {
+        font-family: 'Poppins', sans-serif;
+        font-size: 2em;
+        font-weight: 700;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    
+    div[data-testid="stMetricLabel"] {
+        font-family: 'Poppins', sans-serif;
+        font-weight: 600;
+        color: var(--text-primary);
+        font-size: 0.9em;
+    }
+    
+    /* Sliders personalizados */
+    .stSlider > div > div > div {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    }
+    
+    /* Dataframe mejorado */
+    .dataframe {
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+    }
+    
+    /* Info boxes con iconos */
+    .stAlert {
+        border-radius: 10px;
+        border-left-width: 5px;
+        font-family: 'Poppins', sans-serif;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    
+    /* Divider elegante */
+    hr {
+        margin: 30px 0;
+        border: none;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #667eea, transparent);
+    }
+    
+    /* Panel de análisis con gradiente sutil */
+    .analysis-panel {
+        background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(245,247,250,0.95) 100%);
+        padding: 25px;
+        border-radius: 15px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        backdrop-filter: blur(10px);
+    }
+    
+    /* File uploader mejorado */
+    section[data-testid="stFileUploadDropzone"] {
+        border: 2px dashed #667eea;
+        border-radius: 10px;
+        background: rgba(102, 126, 234, 0.05);
+        transition: all 0.3s ease;
+    }
+    
+    section[data-testid="stFileUploadDropzone"]:hover {
+        border-color: #764ba2;
+        background: rgba(118, 75, 162, 0.08);
+    }
+    
+    /* Imagen con borde redondeado */
+    .stImage > img {
+        border-radius: 15px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+    }
+    
+    /* Footer elegante */
+    .footer {
+        font-family: 'Poppins', sans-serif;
+        text-align: center;
+        color: var(--text-secondary);
+        padding: 30px;
+        margin-top: 50px;
+        background: linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(245,247,250,0.9) 100%);
+        border-radius: 15px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+    }
+    
+    /* Animación de carga */
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    
+    .stSpinner > div {
+        border-color: #667eea !important;
+        animation: pulse 1.5s ease-in-out infinite;
+    }
+    
+    /* Tabs mejorados */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: transparent;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background-color: rgba(255, 255, 255, 0.8);
+        border-radius: 10px;
+        padding: 10px 20px;
+        font-family: 'Poppins', sans-serif;
+        font-weight: 600;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    /* Tarjetas de información con iconos */
+    .info-card {
+        background: white;
+        padding: 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
         margin: 10px 0;
+        border-left: 4px solid #667eea;
+        transition: all 0.3s ease;
+    }
+    
+    .info-card:hover {
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.12);
+        transform: translateX(5px);
+    }
+    
+    /* Badges */
+    .badge {
+        display: inline-block;
+        padding: 5px 12px;
+        border-radius: 20px;
+        font-size: 0.85em;
+        font-weight: 600;
+        font-family: 'Poppins', sans-serif;
+    }
+    
+    .badge-success {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+    }
+    
+    .badge-warning {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+    }
+    
+    .badge-info {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
     }
 </style>
 ''', unsafe_allow_html=True)
@@ -190,54 +441,80 @@ def load_video_frame(video_bytes, frame_idx: int = 0):
 
 # ========== INTERFAZ PRINCIPAL ==========
 st.markdown('<div class="header-main">🌊 Tanque de Ondas Inteligente</div>', unsafe_allow_html=True)
-st.markdown("**Sistema de Análisis de Fenómenos Ondulatorios con Visión Computacional**")
-st.divider()
+st.markdown("""
+<div style='text-align: center; margin-bottom: 20px;'>
+    <span class='badge badge-info'>Visión Computacional</span>
+    <span class='badge badge-success'>Análisis FFT 2D</span>
+    <span class='badge badge-warning'>Control Arduino</span>
+</div>
+""", unsafe_allow_html=True)
+st.markdown("---")
 
 # ========== SIDEBAR - CONTROL ==========
 with st.sidebar:
-    st.header("⚙️ Control de Hardware")
+    st.markdown("## ⚙️ Control de Hardware")
+    st.markdown("---")
 
-    if st.button("🔌 Conectar Hardware", use_container_width=True):
+    if st.button("🔌 Conectar Hardware", type="primary", use_container_width=True):
         init_hardware()
 
+    # ARDUINO SECTION
+    st.markdown("### 🤖 Arduino")
     if st.session_state.servo_controller and st.session_state.servo_controller.connected:
-        st.success("Arduino conectado ✅")
+        st.markdown("<span class='badge badge-success'>✅ Conectado</span>", unsafe_allow_html=True)
+        st.markdown("")
 
-        st.subheader("Parámetros del Motor")
-        freq = st.slider("Frecuencia (Hz)", 1.0, 25.0, 10.0, step=0.5)
-        amp = st.slider("Amplitud (0-1)", 0.0, 1.0, 0.8, step=0.1)
+        st.markdown("**⚡ Parámetros del Motor**")
+        freq = st.slider("🔄 Frecuencia (Hz)", 1.0, 25.0, 10.0, step=0.5)
+        amp = st.slider("📏 Amplitud", 0.0, 1.0, 0.8, step=0.1)
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             if st.button("▶️ Iniciar", use_container_width=True):
                 st.session_state.servo_controller.set_frequency(freq)
                 st.session_state.servo_controller.set_amplitude(amp)
                 st.session_state.servo_controller.start()
-                st.success("Motor iniciado")
+                st.success("✓ Motor iniciado")
 
         with col2:
             if st.button("⏹️ Detener", use_container_width=True):
                 st.session_state.servo_controller.stop()
-                st.info("Motor detenido")
+                st.info("✓ Motor detenido")
 
-        with col3:
-            if st.button("📊 Status", use_container_width=True):
-                status = st.session_state.servo_controller.get_status()
-                st.write(status)
+        if st.button("📊 Ver Estado", use_container_width=True):
+            status = st.session_state.servo_controller.get_status()
+            st.code(status)
     else:
-        st.warning("Arduino no conectado")
+        st.markdown("<span class='badge badge-warning'>⚠ Desconectado</span>", unsafe_allow_html=True)
 
-    st.divider()
-    st.subheader("🎥 Cámara")
-
-    if st.button("📸 Capturar Frame", use_container_width=True):
+    st.markdown("---")
+    
+    # CÁMARA SECTION
+    st.markdown("### 📷 Cámara")
+    
+    if st.session_state.camera and st.session_state.camera.is_opened():
+        st.markdown("<span class='badge badge-success'>✅ Lista</span>", unsafe_allow_html=True)
+    else:
+        st.markdown("<span class='badge badge-warning'>⚠ No disponible</span>", unsafe_allow_html=True)
+    
+    st.markdown("")
+    if st.button("📸 Capturar Imagen", use_container_width=True):
         result = capture_and_analyze_frame()
         st.session_state.frames_buffer = [result] if result else []
+        if result:
+            st.success("✓ Imagen capturada")
 
-    st.divider()
-    st.subheader("🎬 Cargar Video")
+    st.markdown("---")
     
-    uploaded_file = st.file_uploader("Selecciona un video", type=['mp4', 'avi', 'mov'], key="video_uploader")
+    # VIDEO SECTION
+    st.markdown("### 🎬 Cargar Video")
+    
+    uploaded_file = st.file_uploader(
+        "Formatos: MP4, AVI, MOV",
+        type=['mp4', 'avi', 'mov'],
+        key="video_uploader",
+        help="Selecciona un archivo de video para analizar frame por frame"
+    )
     
     if uploaded_file is not None:
         st.session_state.video_file = uploaded_file.getvalue()
@@ -246,13 +523,28 @@ with st.sidebar:
         frame, total_frames, fps = load_video_frame(st.session_state.video_file, 0)
         
         if frame is not None and total_frames > 0:
-            st.success(f"✅ Video cargado: {total_frames} frames @ {fps:.1f} FPS")
+            st.markdown(f"""
+            <div style='background: rgba(17, 153, 142, 0.1); padding: 10px; border-radius: 8px; margin: 10px 0;'>
+                <p style='margin: 0; font-size: 0.9em;'>
+                    ✓ <strong>{total_frames}</strong> frames<br/>
+                    ⏱ <strong>{fps:.1f}</strong> FPS<br/>
+                    ⏳ <strong>{total_frames/fps:.1f}</strong> segundos
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
             
             # Slider para seleccionar frame
-            frame_idx = st.slider("Seleccionar frame", 0, max(0, total_frames - 1), 0, key="frame_slider")
+            frame_idx = st.slider(
+                "🎞 Frame", 
+                0, 
+                max(0, total_frames - 1), 
+                0, 
+                key="frame_slider",
+                help=f"Selecciona el frame a analizar (0-{total_frames-1})"
+            )
             
-            if st.button("🔍 Analizar Frame Seleccionado", use_container_width=True):
-                with st.spinner("Analizando..."):
+            if st.button("🔍 Analizar Frame", type="primary", use_container_width=True):
+                with st.spinner("Procesando..."):
                     frame, _, _ = load_video_frame(st.session_state.video_file, frame_idx)
                     if frame is not None:
                         timestamp = frame_idx / fps * 1000 if fps > 0 else 0
@@ -263,65 +555,156 @@ with st.sidebar:
             st.error("❌ Error al cargar el video")
 
 # ========== MAIN - VISUALIZACIÓN ==========
-st.header("📊 Panel de Análisis")
+st.markdown("## 📊 Panel de Análisis")
 
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    if st.session_state.frames_buffer:
-        result = st.session_state.frames_buffer[0]
-
-        # Mostrar frame
-        st.image(result["frame"], caption="Imagen Capturada", use_container_width=True)
-
-        # Resultados FFT
-        fft_result = result["fft_result"]
-        if fft_result["wavelength_mm"]:
-            st.success(f"✅ Longitud de Onda Detectada: **{fft_result['wavelength_mm']:.2f} mm**")
-            st.write(f"SNR: {fft_result['snr']:.2f} | Confianza: {fft_result['confidence']:.1%}")
-        else:
-            st.warning("No se detectó un patrón de onda claro")
-
-        # Resultados Interferencia
-        interference_result = result["interference_result"]
-        st.write(f"**Análisis de Interferencia:**")
-        st.write(f"- Número de franjas: {interference_result['num_fringes']}")
-        st.write(f"- Contraste: {interference_result['contrast']:.3f}")
-        st.write(f"- Visibilidad: {interference_result['visibility']}")
-
-with col2:
-    st.subheader("📈 Métricas")
-
-    if st.session_state.frames_buffer:
-        result = st.session_state.frames_buffer[0]
+if st.session_state.frames_buffer:
+    result = st.session_state.frames_buffer[0]
+    
+    # Layout principal
+    col1, col2 = st.columns([3, 2])
+    
+    with col1:
+        st.markdown("### 📸 Imagen Analizada")
+        st.image(result["frame"], use_container_width=True)
+    
+    with col2:
+        st.markdown("### 📈 Métricas Principales")
         fft = result["fft_result"]
+        
+        # Métrica principal con estilo
+        if fft['wavelength_mm']:
+            st.markdown(f"""
+            <div class='info-card' style='border-left-color: #11998e;'>
+                <h2 style='color: #11998e; margin: 0;'>🌊 {fft['wavelength_mm']:.2f} mm</h2>
+                <p style='color: #666; margin: 5px 0 0 0;'>Longitud de Onda</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class='info-card' style='border-left-color: #f5576c;'>
+                <p style='color: #f5576c; margin: 0;'>❌ No detectada</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Métricas secundarias
+        col_snr, col_conf = st.columns(2)
+        with col_snr:
+            st.metric("📡 SNR", f"{fft['snr']:.2f}")
+        with col_conf:
+            st.metric("🎯 Confianza", f"{fft['confidence']:.0%}")
+    
+    # Resultados detallados en tabs
+    st.markdown("---")
+    tab1, tab2 = st.tabs(["🔬 Análisis FFT", "🌐 Interferencia"])
+    
+    with tab1:
+        fft_result = result["fft_result"]
+        
+        st.markdown("""
+        <div class='info-card'>
+            <h4>🔍 Transformada de Fourier 2D</h4>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("**Parámetros detectados:**")
+            if fft_result["wavelength_mm"]:
+                st.markdown(f"- Longitud de onda: `{fft_result['wavelength_mm']:.2f} mm`")
+                st.markdown(f"- SNR: `{fft_result['snr']:.2f} dB`")
+                st.markdown(f"- Confianza: `{fft_result['confidence']:.1%}`")
+            else:
+                st.warning("Sin patrón periódico detectado")
+        
+        with col_b:
+            if fft_result["spectrum"] is not None:
+                st.markdown("**Espectro de potencia:**")
+                # Visualizar espectro
+                spectrum_display = np.log1p(fft_result["spectrum"])
+                spectrum_display = (spectrum_display - spectrum_display.min()) / (spectrum_display.max() - spectrum_display.min())
+                st.image(spectrum_display, caption="Espectro FFT (log scale)", use_container_width=True)
+    
+    with tab2:
+        interference_result = result["interference_result"]
+        
+        st.markdown("""
+        <div class='info-card'>
+            <h4>🌊 Análisis de Patrones de Interferencia</h4>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_c, col_d = st.columns(2)
+        with col_c:
+            st.markdown("**Características detectadas:**")
+            st.markdown(f"- Franjas: `{interference_result['num_fringes']}`")
+            st.markdown(f"- Contraste: `{interference_result['contrast']:.3f}`")
+            st.markdown(f"- Visibilidad: `{interference_result['visibility']}`")
+        
+        with col_d:
+            if interference_result.get('spacing_px'):
+                st.markdown("**Espaciado:**")
+                st.markdown(f"- `{interference_result['spacing_px']:.2f}` píxeles")
+                
+                # Indicador visual de calidad
+                contrast = interference_result['contrast']
+                if contrast > 0.5:
+                    st.markdown("<span class='badge badge-success'>✓ Alta calidad</span>", unsafe_allow_html=True)
+                elif contrast > 0.3:
+                    st.markdown("<span class='badge badge-warning'>⚠ Calidad media</span>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<span class='badge badge-info'>ℹ Baja calidad</span>", unsafe_allow_html=True)
 
-        st.metric("Longitud de Onda", 
-                 f"{fft['wavelength_mm']:.2f} mm" if fft['wavelength_mm'] else "---")
-        st.metric("Relación Señal/Ruido", f"{fft['snr']:.2f}")
-        st.metric("Confianza", f"{fft['confidence']:.0%}")
+else:
+    # Mensaje cuando no hay resultados
+    st.markdown("""
+    <div class='info-card' style='text-align: center; padding: 50px;'>
+        <h3 style='color: #667eea;'>👋 Bienvenido</h3>
+        <p style='color: #666; margin-top: 15px;'>
+            Conecta la cámara y captura una imagen, o carga un video para comenzar el análisis
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ========== HISTORIAL ==========
-st.divider()
-st.header("📋 Historial de Mediciones")
+st.markdown("---")
+st.markdown("## 📋 Historial de Mediciones")
 
 if st.session_state.measurements:
+    st.markdown(f"""
+    <div class='info-card'>
+        <p style='margin: 0;'>📊 Total de mediciones: <strong>{len(st.session_state.measurements)}</strong></p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     df = pd.DataFrame(st.session_state.measurements)
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, use_container_width=True, height=300)
 
-    # Descargar datos
+    # Botón de descarga mejorado
     csv = df.to_csv(index=False)
-    st.download_button("📥 Descargar CSV", csv, "mediciones.csv")
+    col1, col2, col3 = st.columns([2, 1, 2])
+    with col2:
+        st.download_button(
+            "📥 Descargar CSV",
+            csv,
+            "mediciones.csv",
+            "text/csv",
+            use_container_width=True
+        )
 else:
-    st.info("Sin mediciones aún")
+    st.markdown("""
+    <div class='info-card' style='text-align: center; border-left-color: #4facfe;'>
+        <p style='color: #666; margin: 0;'>📭 Sin mediciones guardadas aún</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ========== FOOTER ==========
-st.divider()
+st.markdown("---")
 st.markdown('''
----
-**Autores:** Greidy Andrea Cárdenas Correa y Alexánder Mesa Gómez  
-**Institución:** Universidad Tecnológica de Pereira  
-**Asignatura:** Física III  
-**Docente:** Sebastián Velásquez Bonilla  
-**Año:** 2025
-''')
+<div class='footer'>
+    <h4 style='color: #667eea; margin-bottom: 15px;'>🎓 Proyecto Académico</h4>
+    <p><strong>Autores:</strong> Greidy Andrea Cárdenas Correa y Alexánder Mesa Gómez</p>
+    <p><strong>Institución:</strong> Universidad Tecnológica de Pereira</p>
+    <p><strong>Asignatura:</strong> Física III | <strong>Docente:</strong> Sebastián Velásquez Bonilla</p>
+    <p style='margin-top: 15px; color: #999;'>© 2025 | Desarrollado con ❤️ usando Streamlit & OpenCV</p>
+</div>
+''', unsafe_allow_html=True)
