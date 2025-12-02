@@ -28,6 +28,13 @@ st.set_page_config(
 )
 
 # ========== ESTILOS PERSONALIZADOS ==========
+# Metaetiqueta para idioma español y desactivar traducción automática
+st.markdown(
+    '<meta http-equiv="Content-Language" content="es">\n'
+    '<meta name="google" content="notranslate">',
+    unsafe_allow_html=True
+)
+
 st.markdown('''
 <style>
     /* Importar fuentes de Google */
@@ -450,10 +457,38 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.markdown("---")
 
+# ========== PANEL DE AYUDA Y TUTORIAL ==========
+with st.expander('🧑‍🏫 Ayuda y Tutorial', expanded=False):
+    st.markdown('''
+    ### ¿Cómo usar el Tanque de Ondas Inteligente?
+    1. **Conecta el hardware** usando el botón en la barra lateral.
+    2. **Configura la frecuencia y amplitud** del motor.
+    3. **Inicia el movimiento** y **captura una imagen** o **carga un video**.
+    4. **Analiza los resultados**: longitud de onda, SNR, contraste, visibilidad, etc.
+    5. **Descarga los datos** para tu informe o análisis.
+    
+    ---
+    ### Explicaciones Físicas
+    - **FFT 2D**: Permite medir la periodicidad espacial de las ondas en la imagen.
+    - **Interferencia**: Detecta franjas y calcula contraste y visibilidad.
+    - **SNR (Relación señal-ruido)**: Indica la calidad de la medición (mayor es mejor).
+    - **Confianza**: Qué tan seguro es el resultado de la FFT.
+    - **Contraste**: Visibilidad de las franjas de interferencia.
+    
+    [Ver teoría de ondas (Wikipedia)](https://es.wikipedia.org/wiki/Onda)
+    [Ver teoría de interferencia](https://es.wikipedia.org/wiki/Interferencia_(f%C3%ADsica))
+    ''')
+    st.info('¿Tienes dudas? Consulta el manual en la carpeta `docs/` o pregunta a tu docente.')
+
 # ========== SIDEBAR - CONTROL ==========
 with st.sidebar:
     st.markdown("## ⚙️ Control de Hardware")
     st.markdown("---")
+
+    # ========== SELECTOR DE IDIOMA (INTERNACIONALIZACIÓN BÁSICA) ==========
+    language = st.sidebar.selectbox('🌐 Idioma / Language', ['Español', 'English'], index=0)
+    if language == 'English':
+        st.info('The interface is currently only available in Spanish. Contact the instructor for an English version.')
 
     if st.button("🔌 Conectar Hardware", type="primary", use_container_width=True):
         init_hardware()
@@ -554,6 +589,29 @@ with st.sidebar:
         else:
             st.error("❌ Error al cargar el video")
 
+# ========== FEEDBACK Y RECONEXIÓN DE HARDWARE ==========
+if st.session_state.get('servo_controller') and not st.session_state.servo_controller.connected:
+    if st.button('🔄 Reintentar conexión Arduino'):
+        init_hardware()
+    st.warning('Arduino no conectado. Verifica el cable y el puerto.')
+if st.session_state.get('camera') and not st.session_state.camera.cap.isOpened():
+    if st.button('🔄 Reintentar conexión Cámara'):
+        init_hardware()
+    st.warning('Cámara no conectada. Verifica el cable USB.')
+
+# ========== MODO SIMULACIÓN Y PREGUNTAS GUIADAS ==========
+sim_col1, sim_col2 = st.columns([2,2])
+with sim_col1:
+    sim_mode = st.checkbox('🔬 Activar modo simulación (sin hardware)')
+with sim_col2:
+    if st.button('❓ Preguntas para explorar', use_container_width=True):
+        st.markdown('''
+        - ¿Cómo afecta la frecuencia del motor a la longitud de onda observada?
+        - ¿Qué ocurre con el contraste si hay más luz ambiental?
+        - ¿Puedes identificar patrones de interferencia en diferentes videos?
+        - ¿Cómo varía la SNR al cambiar la amplitud?
+        ''')
+
 # ========== MAIN - VISUALIZACIÓN ==========
 st.markdown("## 📊 Panel de Análisis")
 
@@ -653,6 +711,30 @@ if st.session_state.frames_buffer:
                     st.markdown("<span class='badge badge-warning'>⚠ Calidad media</span>", unsafe_allow_html=True)
                 else:
                     st.markdown("<span class='badge badge-info'>ℹ Baja calidad</span>", unsafe_allow_html=True)
+
+# ========== EXPORTACIÓN DE GRÁFICOS E IMÁGENES ==========
+if st.session_state.get('frames_buffer'):
+    result = st.session_state.frames_buffer[0]
+    col_exp1, col_exp2 = st.columns(2)
+    with col_exp1:
+        if st.button('💾 Descargar imagen analizada', use_container_width=True):
+            import io
+            import PIL.Image
+            img = PIL.Image.fromarray(result['frame'])
+            buf = io.BytesIO()
+            img.save(buf, format='PNG')
+            st.download_button('Descargar PNG', buf.getvalue(), file_name='captura.png', mime='image/png')
+    with col_exp2:
+        if result['fft_result'].get('spectrum') is not None:
+            import matplotlib.pyplot as plt
+            import io
+            fig, ax = plt.subplots()
+            ax.imshow(np.log1p(result['fft_result']['spectrum']), cmap='viridis')
+            ax.set_title('Espectro FFT (log)')
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png')
+            st.download_button('Descargar espectro FFT', buf.getvalue(), file_name='fft.png', mime='image/png')
+            plt.close(fig)
 
 else:
     # Mensaje cuando no hay resultados
