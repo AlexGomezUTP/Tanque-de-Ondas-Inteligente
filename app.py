@@ -19,6 +19,18 @@ from camera import VideoCapture
 from fourier_analysis import WaveAnalyzer
 from interference_analysis import InterferenceAnalyzer
 
+# Importar nuevos módulos de física
+try:
+    from calibration import CalibrationManager
+    from wave_theory import WaveTheory
+    from physics_validation import PhysicsValidator, ValidationStatus
+    from data_export import DataExporter, ExperimentMetadata, MeasurementRecord
+    from error_analysis import ErrorAnalyzer
+    PHYSICS_MODULES_AVAILABLE = True
+except ImportError as e:
+    PHYSICS_MODULES_AVAILABLE = False
+    print(f"Advertencia: Módulos de física no disponibles: {e}")
+
 # ========== CONFIGURACIÓN STREAMLIT ==========
 st.set_page_config(
     page_title="Tanque de Ondas Inteligente",
@@ -305,6 +317,25 @@ if 'servo_controller' not in st.session_state:
     st.session_state.frames_buffer = []
     st.session_state.video_file = None
     st.session_state.current_frame_idx = 0
+    
+    # Nuevos estados para física
+    st.session_state.tank_depth_cm = 5.0
+    st.session_state.calibration_px_per_mm = 10.0
+    st.session_state.calibration_uncertainty = 0.5
+    st.session_state.current_frequency = 10.0
+    st.session_state.current_amplitude = 0.8
+    
+    # Inicializar módulos de física si disponibles
+    if PHYSICS_MODULES_AVAILABLE:
+        st.session_state.calibration_manager = CalibrationManager()
+        st.session_state.wave_theory = WaveTheory(tank_depth_cm=5.0)
+        st.session_state.physics_validator = PhysicsValidator()
+        st.session_state.data_exporter = DataExporter()
+    else:
+        st.session_state.calibration_manager = None
+        st.session_state.wave_theory = None
+        st.session_state.physics_validator = None
+        st.session_state.data_exporter = None
 
 # ========== FUNCIONES AUXILIARES ==========
 def init_hardware():
@@ -387,26 +418,45 @@ def capture_and_analyze_frame():
     }
 
 def analyze_frame(frame: np.ndarray, timestamp: float = 0.0) -> dict:
-    """Analiza un frame de video y retorna resultados"""
+    """Analiza un frame de video y retorna resultados con física avanzada"""
     # Convertir a escala de grises si es necesario
     if len(frame.shape) == 3:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     else:
         gray = frame
 
-    # Análisis FFT
-    analyzer = WaveAnalyzer(calibration_pixel_per_mm=10.0)
-    fft_result = analyzer.estimate_wavelength(gray)
+    # Análisis FFT con nuevos módulos
+    analyzer = WaveAnalyzer(
+        calibration_pixel_per_mm=st.session_state.calibration_px_per_mm,
+        calibration_uncertainty=st.session_state.calibration_uncertainty,
+        tank_depth_cm=st.session_state.tank_depth_cm
+    )
+    
+    # Usar frecuencia actual si está disponible
+    excitation_freq = st.session_state.get('current_frequency', None)
+    fft_result = analyzer.estimate_wavelength(gray, excitation_frequency_hz=excitation_freq)
 
     # Análisis de Interferencia
     interference_analyzer = InterferenceAnalyzer()
     interference_result = interference_analyzer.analyze_interference(gray)
 
+    # Convertir resultado a dict compatible
+    fft_dict = fft_result.to_dict() if hasattr(fft_result, 'to_dict') else {
+        "wavelength_mm": fft_result.wavelength_mm,
+        "wavelength_uncertainty_mm": fft_result.wavelength_uncertainty_mm,
+        "snr": fft_result.snr,
+        "confidence": fft_result.confidence,
+        "quality": fft_result.quality,
+        "wavelength_theoretical_mm": fft_result.wavelength_theoretical_mm,
+        "error_percent": fft_result.error_percent,
+        "spectrum": fft_result.spectrum
+    }
+
     return {
         "frame": frame,
         "gray": gray,
         "timestamp": timestamp,
-        "fft_result": fft_result,
+        "fft_result": fft_dict,
         "interference_result": interference_result
     }
 
@@ -465,8 +515,12 @@ with st.sidebar:
         st.markdown("")
 
         st.markdown("**⚡ Parámetros del Motor**")
-        freq = st.slider("🔄 Frecuencia (Hz)", 1.0, 25.0, 10.0, step=0.5)
-        amp = st.slider("📏 Amplitud", 0.0, 1.0, 0.8, step=0.1)
+        freq = st.slider("🔄 Frecuencia (Hz)", 1.0, 25.0, st.session_state.current_frequency, step=0.5)
+        amp = st.slider("📏 Amplitud", 0.0, 1.0, st.session_state.current_amplitude, step=0.1)
+        
+        # Guardar valores actuales
+        st.session_state.current_frequency = freq
+        st.session_state.current_amplitude = amp
 
         col1, col2 = st.columns(2)
         with col1:
@@ -486,7 +540,58 @@ with st.sidebar:
             st.code(status)
     else:
         st.markdown("<span class='badge badge-warning'>⚠ Desconectado</span>", unsafe_allow_html=True)
+        # Permitir configurar frecuencia para análisis de video
+        st.markdown("**Frecuencia de referencia:**")
+        freq = st.slider("🔄 Frecuencia (Hz)", 1.0, 25.0, st.session_state.current_frequency, step=0.5, key="freq_ref")
+        st.session_state.current_frequency = freq
 
+    st.markdown("---")
+    
+    # CONFIGURACIÓN FÍSICA
+    st.markdown("### 🔬 Configuración Física")
+    
+    with st.expander("📐 Parámetros del Tanque", expanded=False):
+        tank_depth = st.number_input(
+            "Profundidad (cm)", 
+            min_value=1.0, 
+            max_value=50.0, 
+            value=st.session_state.tank_depth_cm,
+            step=0.5,
+            help="Profundidad del agua en el tanque"
+        )
+        st.session_state.tank_depth_cm = tank_depth
+        
+        if st.session_state.wave_theory:
+            st.session_state.wave_theory = WaveTheory(tank_depth_cm=tank_depth)
+        
+        # Mostrar λ teórica para frecuencia actual
+        if PHYSICS_MODULES_AVAILABLE and st.session_state.wave_theory:
+            theoretical_wavelength = st.session_state.wave_theory.theoretical_wavelength(
+                st.session_state.current_frequency
+            )
+            st.info(f"λ teórica @ {st.session_state.current_frequency} Hz: **{theoretical_wavelength:.1f} mm**")
+    
+    with st.expander("📏 Calibración", expanded=False):
+        cal_px_mm = st.number_input(
+            "Calibración (px/mm)",
+            min_value=0.1,
+            max_value=100.0,
+            value=st.session_state.calibration_px_per_mm,
+            step=0.5,
+            help="Píxeles por milímetro - calibrar con objeto de referencia"
+        )
+        cal_uncertainty = st.number_input(
+            "Incertidumbre (±px/mm)",
+            min_value=0.01,
+            max_value=10.0,
+            value=st.session_state.calibration_uncertainty,
+            step=0.1
+        )
+        st.session_state.calibration_px_per_mm = cal_px_mm
+        st.session_state.calibration_uncertainty = cal_uncertainty
+        
+        st.caption(f"Resolución: {1/cal_px_mm:.3f} mm/px")
+    
     st.markdown("---")
     
     # CÁMARA SECTION
@@ -571,14 +676,27 @@ if st.session_state.frames_buffer:
         st.markdown("### 📈 Métricas Principales")
         fft = result["fft_result"]
         
-        # Métrica principal con estilo
-        if fft['wavelength_mm']:
+        # Métrica principal con incertidumbre
+        if fft.get('wavelength_mm'):
+            uncertainty = fft.get('wavelength_uncertainty_mm', 0)
             st.markdown(f"""
             <div class='info-card' style='border-left-color: #11998e;'>
-                <h2 style='color: #11998e; margin: 0;'>🌊 {fft['wavelength_mm']:.2f} mm</h2>
-                <p style='color: #666; margin: 5px 0 0 0;'>Longitud de Onda</p>
+                <h2 style='color: #11998e; margin: 0;'>🌊 {fft['wavelength_mm']:.2f} ± {uncertainty:.2f} mm</h2>
+                <p style='color: #666; margin: 5px 0 0 0;'>Longitud de Onda Experimental</p>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Comparación con teoría
+            if fft.get('wavelength_theoretical_mm'):
+                theoretical = fft['wavelength_theoretical_mm']
+                error = fft.get('error_percent', 0)
+                error_color = '#11998e' if error < 5 else '#ffb800' if error < 15 else '#f5576c'
+                st.markdown(f"""
+                <div class='info-card' style='border-left-color: {error_color};'>
+                    <p style='margin: 0;'>λ teórica: <strong>{theoretical:.2f} mm</strong></p>
+                    <p style='margin: 5px 0 0 0; color: {error_color};'>Error: <strong>{error:.1f}%</strong></p>
+                </div>
+                """, unsafe_allow_html=True)
         else:
             st.markdown("""
             <div class='info-card' style='border-left-color: #f5576c;'>
@@ -589,13 +707,25 @@ if st.session_state.frames_buffer:
         # Métricas secundarias
         col_snr, col_conf = st.columns(2)
         with col_snr:
-            st.metric("📡 SNR", f"{fft['snr']:.2f}")
+            st.metric("📡 SNR", f"{fft.get('snr', 0):.2f}")
         with col_conf:
-            st.metric("🎯 Confianza", f"{fft['confidence']:.0%}")
+            st.metric("🎯 Confianza", f"{fft.get('confidence', 0):.0%}")
+        
+        # Calidad de medición
+        quality = fft.get('quality', 'desconocido')
+        quality_colors = {
+            'excelente': 'badge-success',
+            'bueno': 'badge-success', 
+            'aceptable': 'badge-warning',
+            'marginal': 'badge-warning',
+            'pobre': 'badge-info'
+        }
+        badge_class = quality_colors.get(quality, 'badge-info')
+        st.markdown(f"<span class='badge {badge_class}'>Calidad: {quality.capitalize()}</span>", unsafe_allow_html=True)
     
     # Resultados detallados en tabs
     st.markdown("---")
-    tab1, tab2 = st.tabs(["🔬 Análisis FFT", "🌐 Interferencia"])
+    tab1, tab2, tab3 = st.tabs(["🔬 Análisis FFT", "🌐 Interferencia", "📚 Fundamento Teórico"])
     
     with tab1:
         fft_result = result["fft_result"]
@@ -609,15 +739,23 @@ if st.session_state.frames_buffer:
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown("**Parámetros detectados:**")
-            if fft_result["wavelength_mm"]:
-                st.markdown(f"- Longitud de onda: `{fft_result['wavelength_mm']:.2f} mm`")
-                st.markdown(f"- SNR: `{fft_result['snr']:.2f} dB`")
-                st.markdown(f"- Confianza: `{fft_result['confidence']:.1%}`")
+            if fft_result.get("wavelength_mm"):
+                uncertainty = fft_result.get('wavelength_uncertainty_mm', 0)
+                st.markdown(f"- Longitud de onda: `{fft_result['wavelength_mm']:.2f} ± {uncertainty:.2f} mm`")
+                st.markdown(f"- SNR: `{fft_result.get('snr', 0):.2f}`")
+                st.markdown(f"- Confianza: `{fft_result.get('confidence', 0):.1%}`")
+                st.markdown(f"- Calidad: `{fft_result.get('quality', 'N/A')}`")
+                
+                if fft_result.get('wavelength_theoretical_mm'):
+                    st.markdown("---")
+                    st.markdown("**Comparación con teoría:**")
+                    st.markdown(f"- λ teórica: `{fft_result['wavelength_theoretical_mm']:.2f} mm`")
+                    st.markdown(f"- Error: `{fft_result.get('error_percent', 0):.1f}%`")
             else:
                 st.warning("Sin patrón periódico detectado")
         
         with col_b:
-            if fft_result["spectrum"] is not None:
+            if fft_result.get("spectrum") is not None:
                 st.markdown("**Espectro de potencia:**")
                 # Visualizar espectro
                 spectrum_display = np.log1p(fft_result["spectrum"])
@@ -653,6 +791,63 @@ if st.session_state.frames_buffer:
                     st.markdown("<span class='badge badge-warning'>⚠ Calidad media</span>", unsafe_allow_html=True)
                 else:
                     st.markdown("<span class='badge badge-info'>ℹ Baja calidad</span>", unsafe_allow_html=True)
+    
+    with tab3:
+        st.markdown("""
+        ### 📐 Relación de Dispersión
+        
+        Las ondas en agua siguen la **relación de dispersión**:
+        
+        $$\\omega^2 = gk \\cdot \\tanh(kh)$$
+        
+        Donde:
+        - $\\omega = 2\\pi f$ es la frecuencia angular
+        - $k = 2\\pi/\\lambda$ es el número de onda
+        - $g = 9.81$ m/s² es la gravedad
+        - $h$ es la profundidad del agua
+        
+        ---
+        
+        ### 🌊 Regímenes de Onda
+        
+        | Régimen | Condición | Aproximación |
+        |---------|-----------|--------------|
+        | **Aguas profundas** | $h/\\lambda > 0.5$ | $\\omega^2 = gk$ |
+        | **Aguas intermedias** | $0.05 < h/\\lambda < 0.5$ | Ecuación completa |
+        | **Aguas someras** | $h/\\lambda < 0.05$ | $c = \\sqrt{gh}$ |
+        
+        ---
+        
+        ### 📏 Incertidumbre Experimental
+        
+        La incertidumbre en la medición de λ proviene de:
+        1. **Calibración espacial** (px → mm)
+        2. **Resolución del espectro FFT**
+        3. **Ruido de la imagen**
+        
+        Se propaga usando:
+        $$\\delta\\lambda = \\lambda \\cdot \\sqrt{\\left(\\frac{\\delta f}{f}\\right)^2 + \\left(\\frac{\\delta C}{C}\\right)^2}$$
+        """)
+        
+        # Mostrar parámetros actuales si physics modules disponibles
+        if PHYSICS_MODULES_AVAILABLE and st.session_state.wave_theory:
+            st.markdown("---")
+            st.markdown("### 📊 Parámetros del Experimento Actual")
+            
+            freq = st.session_state.current_frequency
+            depth = st.session_state.tank_depth_cm
+            
+            regime = st.session_state.wave_theory.classify_wave_regime(freq)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**Frecuencia:** {freq} Hz")
+                st.markdown(f"**Profundidad:** {depth} cm")
+                st.markdown(f"**λ teórica:** {regime['wavelength_mm']:.1f} mm")
+            with col2:
+                st.markdown(f"**Régimen:** {regime['depth_regime'].replace('_', ' ').title()}")
+                st.markdown(f"**h/λ:** {regime['h_over_lambda']:.3f}")
+                st.markdown(f"**Tipo:** {regime['wave_type'].replace('_', '-').title()}")
 
 else:
     # Mensaje cuando no hay resultados
