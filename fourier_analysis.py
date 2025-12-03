@@ -1,24 +1,117 @@
 """
 TANQUE DE ONDAS - ANÁLISIS DE FOURIER
-Análisis FFT 2D para medir longitud de onda
+Análisis FFT 2D para medir longitud de onda con incertidumbre
 """
 
 import numpy as np
 from scipy.fft import fft2, fftshift
 from scipy.signal import windows
 import logging
-from typing import Tuple, Dict, Optional
+from typing import Tuple, Dict, Optional, List
+from dataclasses import dataclass
+
+# Importar módulos de física (con fallback para compatibilidad)
+try:
+    from calibration import CalibrationManager, CalibrationData
+    from error_analysis import ErrorAnalyzer, MeasurementWithUncertainty
+    from wave_theory import WaveTheory
+    PHYSICS_MODULES_AVAILABLE = True
+except ImportError:
+    PHYSICS_MODULES_AVAILABLE = False
+
+
+@dataclass
+class WaveAnalysisResult:
+    """Resultado completo del análisis de ondas con incertidumbre"""
+    # Mediciones principales
+    wavelength_mm: Optional[float] = None
+    wavelength_uncertainty_mm: Optional[float] = None
+    wavelength_px: Optional[float] = None
+    
+    # Frecuencia espacial
+    spatial_frequency: Optional[float] = None
+    freq_uncertainty: Optional[float] = None
+    freq_x: Optional[float] = None
+    freq_y: Optional[float] = None
+    
+    # Calidad
+    snr: float = 0.0
+    snr_db: float = 0.0
+    confidence: float = 0.0
+    quality: str = "desconocido"
+    
+    # Comparación teórica
+    wavelength_theoretical_mm: Optional[float] = None
+    error_percent: Optional[float] = None
+    within_uncertainty: Optional[bool] = None
+    
+    # Espectro
+    spectrum: Optional[np.ndarray] = None
+    peak_position: Optional[Tuple[int, int]] = None
+    
+    def to_dict(self) -> Dict:
+        """Convierte a diccionario (excluyendo spectrum para serialización)"""
+        return {
+            "wavelength_mm": self.wavelength_mm,
+            "wavelength_uncertainty_mm": self.wavelength_uncertainty_mm,
+            "wavelength_px": self.wavelength_px,
+            "snr": self.snr,
+            "confidence": self.confidence,
+            "quality": self.quality,
+            "wavelength_theoretical_mm": self.wavelength_theoretical_mm,
+            "error_percent": self.error_percent,
+            "freq_x": self.freq_x,
+            "freq_y": self.freq_y
+        }
+
 
 class WaveAnalyzer:
-    # Analiza patrones de onda usando FFT 2D
+    """
+    Analiza patrones de onda usando FFT 2D con cálculo de incertidumbre.
+    
+    Mejoras sobre versión básica:
+    - Integración con módulo de calibración
+    - Cálculo de incertidumbre en mediciones
+    - Comparación con teoría física
+    - Clasificación de calidad de medición
+    """
 
-    def __init__(self, calibration_pixel_per_mm: float = 0.1):
-        # Inicializa analizador
-        # Args:
-        #    calibration_pixel_per_mm: Factor de calibración (píxeles por mm)
-
+    def __init__(
+        self,
+        calibration_pixel_per_mm: float = 10.0,
+        calibration_uncertainty: float = 0.5,
+        tank_depth_cm: float = 5.0
+    ):
+        """
+        Inicializa analizador de ondas.
+        
+        Args:
+            calibration_pixel_per_mm: Factor de calibración (píxeles por mm)
+            calibration_uncertainty: Incertidumbre en calibración (px/mm)
+            tank_depth_cm: Profundidad del agua en el tanque
+        """
         self.calibration = calibration_pixel_per_mm
+        self.calibration_uncertainty = calibration_uncertainty
+        self.tank_depth_cm = tank_depth_cm
         self.logger = logging.getLogger('WaveAnalyzer')
+        
+        # Módulos de física avanzada
+        self._error_analyzer = None
+        self._wave_theory = None
+        
+        if PHYSICS_MODULES_AVAILABLE:
+            self._error_analyzer = ErrorAnalyzer()
+            self._wave_theory = WaveTheory(tank_depth_cm=tank_depth_cm)
+    
+    def set_calibration(
+        self,
+        pixel_per_mm: float,
+        uncertainty: float = 0.5
+    ) -> None:
+        """Actualiza calibración"""
+        self.calibration = pixel_per_mm
+        self.calibration_uncertainty = uncertainty
+        self.logger.info(f"Calibración actualizada: {pixel_per_mm:.2f} ± {uncertainty:.2f} px/mm")
 
     def preprocess_image(self, image: np.ndarray, downsample: int = 4) -> np.ndarray:
         # Preprocesa imagen
@@ -56,11 +149,13 @@ class WaveAnalyzer:
 
         return spectrum
 
-    def find_peak_frequency(self, spectrum: np.ndarray) -> Tuple[float, float, float]:
-        # Encuentra pico dominante en espectro
-        # Returns:
-        #    (freq_x, freq_y, magnitude) en ciclos/píxel
-
+    def find_peak_frequency(self, spectrum: np.ndarray) -> Tuple[float, float, float, Tuple[int, int]]:
+        """
+        Encuentra pico dominante en espectro.
+        
+        Returns:
+            (freq_x, freq_y, magnitude, peak_position) en ciclos/píxel
+        """
         h, w = spectrum.shape
         center_y, center_x = h // 2, w // 2
 
@@ -81,51 +176,214 @@ class WaveAnalyzer:
         freq_x = dist_x / w  # ciclos/píxel
         freq_y = dist_y / h  # ciclos/píxel
 
-        return freq_x, freq_y, peak_value
+        return freq_x, freq_y, peak_value, peak_idx
+    
+    def estimate_frequency_uncertainty(
+        self,
+        spectrum: np.ndarray,
+        peak_position: Tuple[int, int]
+    ) -> float:
+        """
+        Estima incertidumbre en la frecuencia espacial usando ancho del pico.
+        
+        Returns:
+            Incertidumbre en ciclos/píxel
+        """
+        py, px = peak_position
+        h, w = spectrum.shape
+        
+        # Extraer perfiles en X e Y
+        margin = 15
+        profile_x = spectrum[py, max(0, px-margin):min(w, px+margin+1)]
+        profile_y = spectrum[max(0, py-margin):min(h, py+margin+1), px]
+        
+        # Estimar FWHM (Full Width at Half Maximum)
+        def estimate_fwhm(profile):
+            if len(profile) < 3:
+                return 2.0
+            max_val = np.max(profile)
+            half_max = max_val / 2
+            above_half = profile > half_max
+            if not np.any(above_half):
+                return 2.0
+            indices = np.where(above_half)[0]
+            return max(indices[-1] - indices[0] + 1, 1.0)
+        
+        fwhm_x = estimate_fwhm(profile_x)
+        fwhm_y = estimate_fwhm(profile_y)
+        
+        # Incertidumbre en frecuencia (en bins)
+        fwhm_avg = (fwhm_x + fwhm_y) / 2
+        sigma_bins = fwhm_avg / 2.355  # FWHM = 2.355 * sigma
+        
+        # Convertir a ciclos/píxel
+        uncertainty = sigma_bins / max(h, w)
+        
+        return max(uncertainty, 1.0 / max(h, w))  # Mínimo: 1 bin
 
-    def estimate_wavelength(self, image: np.ndarray, downsample: int = 4) -> Dict:
-        # Estima longitud de onda a partir de imagen
-        # Returns:
-        #    Dict con: wavelength_mm, snr, confidence
-
+    def estimate_wavelength(
+        self,
+        image: np.ndarray,
+        downsample: int = 4,
+        excitation_frequency_hz: Optional[float] = None
+    ) -> WaveAnalysisResult:
+        """
+        Estima longitud de onda con incertidumbre y comparación teórica.
+        
+        Args:
+            image: Imagen en escala de grises
+            downsample: Factor de downsampling
+            excitation_frequency_hz: Frecuencia del servo (para comparar con teoría)
+        
+        Returns:
+            WaveAnalysisResult con mediciones completas e incertidumbre
+        """
+        result = WaveAnalysisResult()
+        
         # Preprocesar
         processed = self.preprocess_image(image, downsample)
 
         # FFT
         spectrum = self.compute_fft2d(processed)
+        result.spectrum = spectrum
 
         # Encontrar pico
-        freq_x, freq_y, peak_mag = self.find_peak_frequency(spectrum)
+        freq_x, freq_y, peak_mag, peak_pos = self.find_peak_frequency(spectrum)
+        result.freq_x = freq_x
+        result.freq_y = freq_y
+        result.peak_position = peak_pos
 
         # Frecuencia espacial total (en ciclos/píxel del downsampled)
         spatial_freq = np.sqrt(freq_x**2 + freq_y**2)
+        result.spatial_frequency = spatial_freq
 
         if spatial_freq < 1e-8:
-            return {"wavelength_mm": None, "wavelength_px": None, "snr": 0, "confidence": 0, "spectrum": spectrum}
+            result.quality = "sin_señal"
+            return result
+
+        # Estimar incertidumbre en frecuencia
+        freq_uncertainty = self.estimate_frequency_uncertainty(spectrum, peak_pos)
+        result.freq_uncertainty = freq_uncertainty
 
         # Wavelength en píxeles del downsampled
         wavelength_px_downsampled = 1.0 / spatial_freq
 
         # Corregir por downsample para obtener wavelength en píxeles originales
         wavelength_px = wavelength_px_downsampled * downsample
+        result.wavelength_px = wavelength_px
 
         # Convertir a mm usando factor de calibración
-        # calibration_pixel_per_mm indica cuántos píxeles hay por mm
         wavelength_mm = wavelength_px / self.calibration
+        result.wavelength_mm = wavelength_mm
 
-        # SNR (relación pico/ruido)
+        # Calcular incertidumbre en longitud de onda
+        if self._error_analyzer and PHYSICS_MODULES_AVAILABLE:
+            measurement = self._error_analyzer.propagate_wavelength_from_fft(
+                spatial_frequency=spatial_freq / downsample,  # En original
+                freq_uncertainty=freq_uncertainty / downsample,
+                calibration_px_per_mm=self.calibration,
+                cal_uncertainty=self.calibration_uncertainty
+            )
+            result.wavelength_uncertainty_mm = measurement.uncertainty
+        else:
+            # Estimación simplificada de incertidumbre
+            rel_uncertainty = np.sqrt(
+                (freq_uncertainty / spatial_freq)**2 +
+                (self.calibration_uncertainty / self.calibration)**2
+            )
+            result.wavelength_uncertainty_mm = wavelength_mm * rel_uncertainty
+
+        # Calcular SNR
         noise_level = np.median(spectrum)
-        snr = peak_mag / (noise_level + 1e-8)
-        confidence = min(1.0, snr / 100.0)  # Normalizar a 0-1
+        result.snr = peak_mag / (noise_level + 1e-8)
+        result.snr_db = 10 * np.log10(result.snr) if result.snr > 0 else 0
+        result.confidence = min(1.0, result.snr / 100.0)
+        
+        # Clasificar calidad
+        if result.snr > 100:
+            result.quality = "excelente"
+        elif result.snr > 30:
+            result.quality = "bueno"
+        elif result.snr > 10:
+            result.quality = "aceptable"
+        elif result.snr > 3:
+            result.quality = "marginal"
+        else:
+            result.quality = "pobre"
 
+        # Comparación con teoría si hay frecuencia de excitación
+        if excitation_frequency_hz and self._wave_theory:
+            theoretical = self._wave_theory.theoretical_wavelength(excitation_frequency_hz)
+            result.wavelength_theoretical_mm = theoretical
+            result.error_percent = abs(wavelength_mm - theoretical) / theoretical * 100
+            
+            if result.wavelength_uncertainty_mm:
+                result.within_uncertainty = (
+                    abs(wavelength_mm - theoretical) <= 2 * result.wavelength_uncertainty_mm
+                )
+
+        return result
+    
+    def estimate_wavelength_simple(
+        self,
+        image: np.ndarray,
+        downsample: int = 4
+    ) -> Dict:
+        """
+        Versión simplificada para compatibilidad con código existente.
+        
+        Returns:
+            Dict con: wavelength_mm, wavelength_px, snr, confidence, spectrum
+        """
+        result = self.estimate_wavelength(image, downsample)
+        
         return {
-            "wavelength_mm": wavelength_mm,
-            "wavelength_px": wavelength_px,
-            "snr": snr,
-            "confidence": confidence,
-            "freq_x": freq_x,
-            "freq_y": freq_y,
-            "spectrum": spectrum
+            "wavelength_mm": result.wavelength_mm,
+            "wavelength_px": result.wavelength_px,
+            "wavelength_uncertainty_mm": result.wavelength_uncertainty_mm,
+            "snr": result.snr,
+            "confidence": result.confidence,
+            "quality": result.quality,
+            "freq_x": result.freq_x,
+            "freq_y": result.freq_y,
+            "spectrum": result.spectrum
+        }
+    
+    def analyze_multiple_frames(
+        self,
+        frames: List[np.ndarray],
+        excitation_frequency_hz: Optional[float] = None
+    ) -> Dict:
+        """
+        Analiza múltiples frames y calcula estadísticas.
+        
+        Returns:
+            Dict con estadísticas de las mediciones
+        """
+        wavelengths = []
+        snrs = []
+        
+        for frame in frames:
+            result = self.estimate_wavelength(frame, excitation_frequency_hz=excitation_frequency_hz)
+            if result.wavelength_mm is not None:
+                wavelengths.append(result.wavelength_mm)
+                snrs.append(result.snr)
+        
+        if not wavelengths:
+            return {"error": "No se pudieron medir longitudes de onda"}
+        
+        wavelengths = np.array(wavelengths)
+        
+        return {
+            "n_frames": len(wavelengths),
+            "wavelength_mean_mm": float(np.mean(wavelengths)),
+            "wavelength_std_mm": float(np.std(wavelengths, ddof=1)),
+            "wavelength_sem_mm": float(np.std(wavelengths, ddof=1) / np.sqrt(len(wavelengths))),
+            "wavelength_min_mm": float(np.min(wavelengths)),
+            "wavelength_max_mm": float(np.max(wavelengths)),
+            "snr_mean": float(np.mean(snrs)),
+            "wavelength_theoretical_mm": self._wave_theory.theoretical_wavelength(excitation_frequency_hz)
+                if excitation_frequency_hz and self._wave_theory else None
         }
 
 
@@ -140,11 +398,36 @@ if __name__ == "__main__":
     X, Y = np.meshgrid(x, y)
 
     # Onda sinusoidal con wavelength ~20 píxeles
-    test_image = np.sin(2 * np.pi * X / 20).astype(np.uint8)
+    test_image = (127 + 100 * np.sin(2 * np.pi * X / 0.8)).astype(np.uint8)
 
-    analyzer = WaveAnalyzer(calibration_pixel_per_mm=0.1)
-    result = analyzer.estimate_wavelength(test_image)
+    # Usar calibración realista: 10 px/mm
+    analyzer = WaveAnalyzer(
+        calibration_pixel_per_mm=10.0,
+        calibration_uncertainty=0.5,
+        tank_depth_cm=5.0
+    )
+    
+    print("=" * 50)
+    print("ANÁLISIS FFT 2D CON INCERTIDUMBRE")
+    print("=" * 50)
+    
+    # Análisis completo
+    result = analyzer.estimate_wavelength(test_image, excitation_frequency_hz=10.0)
 
-    print(f"Wavelength: {result['wavelength_mm']:.2f} mm")
-    print(f"SNR: {result['snr']:.2f}")
-    print(f"Confianza: {result['confidence']:.2%}")
+    print(f"\nResultados:")
+    print(f"  Longitud de onda: {result.wavelength_mm:.2f} ± {result.wavelength_uncertainty_mm:.2f} mm")
+    print(f"  SNR: {result.snr:.2f} ({result.snr_db:.1f} dB)")
+    print(f"  Confianza: {result.confidence:.1%}")
+    print(f"  Calidad: {result.quality}")
+    
+    if result.wavelength_theoretical_mm:
+        print(f"\nComparación con teoría:")
+        print(f"  λ teórica: {result.wavelength_theoretical_mm:.2f} mm")
+        print(f"  Error: {result.error_percent:.1f}%")
+        print(f"  Dentro de incertidumbre: {result.within_uncertainty}")
+    
+    # Versión simplificada (compatible)
+    print("\n--- Versión simplificada (dict) ---")
+    simple_result = analyzer.estimate_wavelength_simple(test_image)
+    print(f"Wavelength: {simple_result['wavelength_mm']:.2f} mm")
+    print(f"SNR: {simple_result['snr']:.2f}")
