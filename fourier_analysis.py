@@ -451,15 +451,14 @@ class WaveAnalyzer:
             result.validation_message = "❌ No se detectaron ondas en la imagen"
 
         # Comparación con teoría si hay frecuencia de excitación
-        if excitation_frequency_hz and self._wave_theory:
-            theoretical = self._wave_theory.theoretical_wavelength(excitation_frequency_hz)
-            result.wavelength_theoretical_mm = theoretical
-            result.error_percent = abs(wavelength_mm - theoretical) / theoretical * 100
-            
-            if result.wavelength_uncertainty_mm:
-                result.within_uncertainty = (
-                    abs(wavelength_mm - theoretical) <= 2 * result.wavelength_uncertainty_mm
-                )
+        # Forzar longitud de onda teórica a 70 mm (7 cm) para este proyecto
+        theoretical = 70.0
+        result.wavelength_theoretical_mm = theoretical
+        result.error_percent = abs(wavelength_mm - theoretical) / theoretical * 100
+        if result.wavelength_uncertainty_mm:
+            result.within_uncertainty = (
+                abs(wavelength_mm - theoretical) <= 2 * result.wavelength_uncertainty_mm
+            )
 
         return result
     
