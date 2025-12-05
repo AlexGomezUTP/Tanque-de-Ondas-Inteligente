@@ -83,6 +83,7 @@ class WaveTheory:
     def solve_wavenumber(self, frequency_hz: float) -> float:
         """
         Resuelve k dado ω usando la relación de dispersión.
+        Para h=5cm (aguas someras típicamente): usa aproximación simplificada.
         
         Args:
             frequency_hz: Frecuencia de la onda en Hz
@@ -92,40 +93,52 @@ class WaveTheory:
         """
         omega = 2 * np.pi * frequency_hz
         
+        # Primero intentar con aproximación de aguas someras
+        # En aguas someras: c = sqrt(g*h), k = ω/c = ω/sqrt(g*h)
+        c_shallow = np.sqrt(self.GRAVITY * self.depth_m)
+        k_shallow = omega / c_shallow
+        
+        # Verificar si es válida la aproximación de aguas someras
+        # Condición: kh << 1 (típicamente kh < 0.3)
+        kh = k_shallow * self.depth_m
+        
+        if kh < 0.3:
+            # Aguas someras: usar fórmula simplificada
+            self.logger.debug(f"Usando aproximación aguas someras (kh={kh:.3f})")
+            return k_shallow
+        
+        # Si no es aguas someras, resolver numéricamente la dispersión completa
         # Estimación inicial: aproximación de aguas profundas k ≈ ω²/g
         k_deep = omega**2 / self.GRAVITY
         
-        # Resolver numéricamente
         try:
             # Usar brentq para mejor convergencia
             def f(k):
                 return self.dispersion_relation(k, omega)
             
             # Buscar en rango razonable
-            k_min = k_deep * 0.1
+            k_min = k_shallow * 0.5  # Usar aguas someras como referencia
             k_max = k_deep * 10
             
             # Asegurar que hay cambio de signo
-            while f(k_min) * f(k_max) > 0:
+            while f(k_min) * f(k_max) > 0 and k_max < 10000:
                 k_max *= 2
-                if k_max > 10000:
-                    break
             
-            k_solution = brentq(f, k_min, k_max)
-            return k_solution
+            if f(k_min) * f(k_max) < 0:
+                k_solution = brentq(f, k_min, k_max)
+                return k_solution
+            else:
+                # Fallback a aguas someras si no converge
+                return k_shallow
             
         except Exception as e:
-            self.logger.warning(f"Error resolviendo dispersión: {e}, usando fsolve")
-            k_solution = fsolve(
-                lambda k: self.dispersion_relation(k, omega),
-                k_deep,
-                full_output=False
-            )[0]
-            return abs(k_solution)
+            self.logger.warning(f"Error resolviendo dispersión: {e}, usando aguas someras")
+            return k_shallow
     
     def theoretical_wavelength(self, frequency_hz: float) -> float:
         """
         Calcula longitud de onda teórica para una frecuencia dada.
+        Para h=5cm (aguas someras típicamente): λ = c·T = sqrt(g·h)·(1/f)
         
         Args:
             frequency_hz: Frecuencia de excitación en Hz
@@ -133,6 +146,19 @@ class WaveTheory:
         Returns:
             Longitud de onda en mm
         """
+        # Intentar primero con aguas someras (válido para kh < 0.3)
+        c_shallow = np.sqrt(self.GRAVITY * self.depth_m)
+        wavelength_shallow = c_shallow / frequency_hz  # λ = c*T = c/f
+        
+        # Verificar si es aguas someras: kh < 0.3
+        k_test = 2 * np.pi / wavelength_shallow
+        kh = k_test * self.depth_m
+        
+        if kh < 0.3:
+            # Usar resultado de aguas someras
+            return wavelength_shallow * 1000  # Convertir a mm
+        
+        # Si no es aguas someras, usar relación de dispersión completa
         k = self.solve_wavenumber(frequency_hz)
         wavelength_m = 2 * np.pi / k
         return wavelength_m * 1000  # Convertir a mm
@@ -140,21 +166,42 @@ class WaveTheory:
     def phase_velocity(self, frequency_hz: float) -> float:
         """
         Calcula velocidad de fase c = ω/k
+        Para aguas someras: c = sqrt(g*h) (independiente de frecuencia)
         
         Returns:
             Velocidad de fase en m/s
         """
+        # En aguas someras, velocidad es constante
+        c_shallow = np.sqrt(self.GRAVITY * self.depth_m)
+        
+        # Verificar si se aplica aguas someras
         k = self.solve_wavenumber(frequency_hz)
-        omega = 2 * np.pi * frequency_hz
-        return omega / k
+        wavelength_m = 2 * np.pi / k
+        kh = k * self.depth_m
+        
+        if kh < 0.3:
+            return c_shallow
+        else:
+            omega = 2 * np.pi * frequency_hz
+            return omega / k
     
     def group_velocity(self, frequency_hz: float, delta_f: float = 0.1) -> float:
         """
         Calcula velocidad de grupo cg = dω/dk (derivada numérica)
+        Para aguas someras: cg = c (igual a velocidad de fase)
         
         Returns:
             Velocidad de grupo en m/s
         """
+        # Verificar si se aplica aguas someras
+        k_center = self.solve_wavenumber(frequency_hz)
+        wavelength_m = 2 * np.pi / k_center
+        kh = k_center * self.depth_m
+        
+        if kh < 0.3:
+            # En aguas someras, cg = c
+            return np.sqrt(self.GRAVITY * self.depth_m)
+        
         k1 = self.solve_wavenumber(frequency_hz - delta_f/2)
         k2 = self.solve_wavenumber(frequency_hz + delta_f/2)
         
@@ -166,11 +213,12 @@ class WaveTheory:
     def classify_wave_regime(self, frequency_hz: float) -> Dict:
         """
         Clasifica el régimen de la onda según profundidad relativa.
+        Para h=5cm (tanque), típicamente en aguas someras o transición.
         
-        Criterios:
-        - Aguas profundas: h/λ > 0.5 (kh > π)
-        - Aguas intermedias: 0.05 < h/λ < 0.5
-        - Aguas someras: h/λ < 0.05 (kh < 0.31)
+        Criterios (basados en kh):
+        - Aguas profundas: kh > π (h/λ > 0.5)
+        - Aguas intermedias: 0.3 < kh < π (0.05 < h/λ < 0.5)
+        - Aguas someras: kh < 0.3 (h/λ < 0.05) → c = sqrt(g*h)
         
         También clasifica por tipo:
         - Ondas de gravedad: λ >> λc (17mm)
@@ -184,16 +232,17 @@ class WaveTheory:
         k = 2 * np.pi / wavelength_m
         kh = k * self.depth_m
         
-        # Clasificación por profundidad
-        if h_over_lambda > 0.5:
-            depth_regime = "aguas_profundas"
-            depth_description = "Ondas no sienten el fondo"
-        elif h_over_lambda > 0.05:
-            depth_regime = "aguas_intermedias"
-            depth_description = "Transición entre profundas y someras"
-        else:
+        # Clasificación por profundidad relativa (mejor para h=5cm)
+        if kh < 0.3:
             depth_regime = "aguas_someras"
-            depth_description = "Ondas sienten fuertemente el fondo"
+            c_approx = np.sqrt(self.GRAVITY * self.depth_m)
+            depth_description = f"Someras (kh={kh:.3f}); c≈{c_approx:.2f} m/s"
+        elif kh < np.pi:
+            depth_regime = "aguas_intermedias"
+            depth_description = f"Transición (kh={kh:.3f})"
+        else:
+            depth_regime = "aguas_profundas"
+            depth_description = f"Profundas (kh={kh:.3f})"
         
         # Clasificación por tipo de onda
         if wavelength_mm > 3 * self.lambda_c:
@@ -214,7 +263,9 @@ class WaveTheory:
             "type_description": type_description,
             "h_over_lambda": h_over_lambda,
             "kh": kh,
-            "capillary_length_mm": self.lambda_c
+            "capillary_length_mm": self.lambda_c,
+            "phase_velocity_m_s": self.phase_velocity(frequency_hz),
+            "group_velocity_m_s": self.group_velocity(frequency_hz)
         }
     
     def compare_with_experiment(

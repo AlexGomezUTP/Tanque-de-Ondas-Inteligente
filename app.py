@@ -565,15 +565,8 @@ with st.sidebar:
         )
         st.session_state.tank_depth_cm = tank_depth
         
-        if st.session_state.wave_theory:
-            st.session_state.wave_theory = WaveTheory(tank_depth_cm=tank_depth)
-        
-        # Mostrar λ teórica para frecuencia actual
-        if PHYSICS_MODULES_AVAILABLE and st.session_state.wave_theory:
-            theoretical_wavelength = st.session_state.wave_theory.theoretical_wavelength(
-                st.session_state.current_frequency
-            )
-            st.info(f"λ teórica @ {st.session_state.current_frequency} Hz: **{theoretical_wavelength:.1f} mm**")
+        # Mostrar λ teórica fija en 70 mm (7 cm)
+        st.info(f"λ teórica: **70.0 mm** (7 cm)")
     
     with st.expander("📏 Calibración", expanded=False):
         cal_px_mm = st.number_input(

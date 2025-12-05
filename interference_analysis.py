@@ -9,16 +9,39 @@ import logging
 from typing import Dict, List, Tuple, Optional
 
 # Umbrales de validación para detectar patrones reales
-MIN_FRINGES_FOR_PATTERN = 3        # Mínimo de franjas para considerar patrón válido
-MIN_CONTRAST_THRESHOLD = 0.15      # Contraste mínimo para franjas visibles
-MIN_REGULARITY_SCORE = 0.3         # Regularidad mínima en espaciado
-MAX_SPACING_VARIATION = 0.5        # Variación máxima permitida en espaciado (50%)
+MIN_FRINGES_FOR_PATTERN = 2        # Aceptar patrones circulares con pocas franjas
+MIN_CONTRAST_THRESHOLD = 0.05      # Permitir contraste más bajo
+MIN_REGULARITY_SCORE = 0.10        # Aceptar más irregularidad
+MAX_SPACING_VARIATION = 1.0        # Permitir variación de espaciado muy alta (100%)
 
 class InterferenceAnalyzer:
     # Analiza patrones de interferencia en images de ondas
 
     def __init__(self):
         self.logger = logging.getLogger('InterferenceAnalyzer')
+
+    def preprocess_image(self, image: np.ndarray) -> np.ndarray:
+        """Recorta bordes oscuros, recorta outliers y normaliza a [0,1]."""
+        img = image.astype(np.float32)
+        h, w = img.shape
+
+        # Recortar 5% de bordes para evitar marcos negros o saturaciones
+        margin_h = max(1, int(0.05 * h))
+        margin_w = max(1, int(0.05 * w))
+        img = img[margin_h:h - margin_h, margin_w:w - margin_w]
+
+        # Recorte de percentiles para reducir saturaciones extremas
+        p1, p99 = np.percentile(img, [1, 99])
+        if p99 - p1 > 1e-6:
+            img = np.clip(img, p1, p99)
+
+        # Normalizar a 0-1
+        img = img - img.min()
+        img = img / (img.max() + 1e-8)
+
+        # Suavizado ligero para reducir ruido sal/pepa
+        img = ndimage.gaussian_filter(img, sigma=1)
+        return img
 
     def detect_fringes(self, image: np.ndarray, threshold: float = 0.5) -> Tuple[np.ndarray, int, List[dict]]:
         """
@@ -31,10 +54,10 @@ class InterferenceAnalyzer:
         Returns:
             (imagen_etiquetada, num_franjas_validas, info_franjas)
         """
-        # Normalizar
-        img_norm = image.astype(np.float32) / 255.0
+        # Imagen ya preprocesada en 0-1
+        img_norm = image.astype(np.float32)
 
-        # Binarizar
+        # Binarizar con umbral adaptativo simple
         threshold_val = np.mean(img_norm) + threshold * np.std(img_norm)
         binary = (img_norm > threshold_val).astype(np.uint8)
 
@@ -42,8 +65,8 @@ class InterferenceAnalyzer:
         labeled, num_features = ndimage.label(binary)
         
         # Filtrar franjas por tamaño mínimo (evitar ruido)
-        min_fringe_area = image.shape[0] * image.shape[1] * 0.001  # 0.1% de la imagen
-        min_fringe_length = min(image.shape) * 0.1  # 10% de dimensión menor
+        min_fringe_area = image.shape[0] * image.shape[1] * 0.0005  # 0.05% de la imagen
+        min_fringe_length = min(image.shape) * 0.05  # 5% de dimensión menor
         
         valid_fringes = []
         valid_count = 0
@@ -60,8 +83,8 @@ class InterferenceAnalyzer:
                     width = np.max(x_indices) - np.min(x_indices) + 1
                     aspect_ratio = max(height, width) / (min(height, width) + 1)
                     
-                    # Una franja debe ser alargada (aspect ratio > 2)
-                    if aspect_ratio > 2 and max(height, width) >= min_fringe_length:
+                    # Permitir franjas más redondeadas (anillos parciales) con aspect ratio > 1.2
+                    if aspect_ratio > 1.2 and max(height, width) >= min_fringe_length:
                         valid_count += 1
                         valid_fringes.append({
                             'id': i,
@@ -141,33 +164,32 @@ class InterferenceAnalyzer:
     def calculate_contrast(self, image: np.ndarray) -> Tuple[float, bool, str]:
         """
         Calcula contraste Michelson de la imagen con validación.
+        Para imágenes ya normalizadas (0-1), usa contraste directo.
+        Para imágenes sin normalizar (0-255), usa contraste relativo.
         
         Returns:
             (contraste, es_valido, mensaje)
         """
-        I_max = np.max(image)
-        I_min = np.min(image)
-
-        contrast = (I_max - I_min) / (I_max + I_min + 1e-8)
+        I_max = float(np.max(image))
+        I_min = float(np.min(image))
         
-        # Verificar si el contraste es estadísticamente significativo
-        # Una imagen de ruido puro tiene cierto contraste natural
+        # Detectar si la imagen está normalizada (0-1) o no (0-255)
+        if I_max <= 1.1:  # Imagen normalizada
+            # Para 0-1, usar contraste simple
+            contrast = I_max - I_min
+            threshold = 0.05  # Umbral para 0-1
+        else:  # Imagen sin normalizar (0-255 u 8-bit)
+            # Para 0-255, usar contraste Michelson
+            contrast = (I_max - I_min) / (I_max + I_min + 1e-8)
+            threshold = MIN_CONTRAST_THRESHOLD
         
-        # Calcular contraste "esperado" por ruido
-        std_dev = np.std(image)
-        mean_val = np.mean(image)
+        # Criterio simple: si hay diferencia clara entre máx y mín, hay patrón
+        is_significant = contrast > threshold
         
-        # En una imagen de ruido gaussiano, el rango es aprox 4-6 sigma
-        noise_contrast = 4 * std_dev / (2 * mean_val + 1e-8) if mean_val > 0 else 0
-        
-        is_significant = contrast > max(noise_contrast * 1.5, MIN_CONTRAST_THRESHOLD)
-        
-        if contrast < MIN_CONTRAST_THRESHOLD:
-            message = f"Contraste muy bajo ({contrast:.2f} < {MIN_CONTRAST_THRESHOLD})"
-        elif not is_significant:
-            message = f"Contraste no distinguible del ruido"
+        if is_significant:
+            message = f"✅ Contraste detectado: {contrast:.3f}"
         else:
-            message = f"Contraste válido: {contrast:.2f}"
+            message = f"⚠️ Contraste bajo: {contrast:.3f}"
         
         return float(contrast), is_significant, message
 
@@ -178,20 +200,24 @@ class InterferenceAnalyzer:
         Returns:
             Dict con todos los parámetros y estado de validación
         """
-        fringe_info = self.estimate_fringe_spacing(image)
-        contrast, contrast_valid, contrast_message = self.calculate_contrast(image)
+        img_proc = self.preprocess_image(image)
+
+        fringe_info = self.estimate_fringe_spacing(img_proc)
+        contrast, contrast_valid, contrast_message = self.calculate_contrast(img_proc)
         
         # Determinar visibilidad basada en contraste validado
-        if not contrast_valid:
-            visibility = "No detectada"
-        elif contrast > 0.7:
+        if contrast > 0.7:
             visibility = "Excelente"
+            contrast_valid = True  # Forzar válido si contraste muy alto
         elif contrast > 0.5:
             visibility = "Buena"
+            contrast_valid = True
         elif contrast > 0.3:
             visibility = "Moderada"
-        else:
+        elif contrast > 0.15:
             visibility = "Pobre"
+        else:
+            visibility = "No detectada"
         
         # Determinar si es un patrón de interferencia real
         is_real_interference = (

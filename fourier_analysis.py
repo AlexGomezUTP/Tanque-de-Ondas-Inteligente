@@ -251,13 +251,18 @@ class WaveAnalyzer:
             score *= 0.5
         
         # 3. Verificar que no sea imagen uniforme (DC dominante)
-        dc_region = spectrum[center_y-3:center_y+4, center_x-3:center_x+4]
+        # Ampliamos la ventana DC y comparamos contra el pico para evitar falsos positivos
+        dc_region = spectrum[max(0, center_y-5):min(h, center_y+6), max(0, center_x-5):min(w, center_x+6)]
         dc_power = np.sum(dc_region)
-        total_power = np.sum(spectrum)
-        
-        if dc_power > 0.9 * total_power:
+        dc_mean = np.mean(dc_region) if dc_region.size > 0 else 0.0
+        total_power = np.sum(spectrum) + 1e-12
+        dc_ratio = dc_power / total_power
+        peak_to_dc = peak_value / (dc_mean + 1e-12)
+
+        # Solo marcar uniforme si el DC domina casi todo y el pico no destaca sobre el DC
+        if dc_ratio > 0.98 and peak_to_dc < 3.0:
             issues.append("Imagen casi uniforme (sin variación espacial)")
-            score *= 0.1
+            score *= 0.2
         
         # 4. Verificar distribución de energía en el espectro
         # Si la energía está muy concentrada en bajas frecuencias, probablemente no hay ondas
@@ -270,9 +275,9 @@ class WaveAnalyzer:
         low_freq_energy = np.sum(spectrum[low_freq_mask])
         mid_freq_energy = np.sum(spectrum[mid_freq_mask])
         
-        if mid_freq_energy < low_freq_energy * 0.01:
+        if mid_freq_energy < low_freq_energy * 0.001 and peak_to_dc < 3.0:
             issues.append("Sin patrones periódicos detectables")
-            score *= 0.2
+            score *= 0.4
         
         return max(0.0, min(1.0, score)), issues
     
