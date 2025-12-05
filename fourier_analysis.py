@@ -20,6 +20,14 @@ except ImportError:
     PHYSICS_MODULES_AVAILABLE = False
 
 
+# Umbrales de validación para detectar ondas reales
+MIN_SNR_THRESHOLD = 5.0          # SNR mínimo para considerar señal válida
+MIN_CONFIDENCE_THRESHOLD = 0.10  # Confianza mínima (10%)
+MIN_PERIODICITY_SCORE = 0.3      # Score mínimo de periodicidad
+MIN_WAVELENGTH_PX = 4.0          # Longitud de onda mínima en píxeles (Nyquist)
+MAX_WAVELENGTH_RATIO = 0.5       # λ no puede ser > 50% del tamaño de imagen
+
+
 @dataclass
 class WaveAnalysisResult:
     """Resultado completo del análisis de ondas con incertidumbre"""
@@ -40,6 +48,12 @@ class WaveAnalysisResult:
     confidence: float = 0.0
     quality: str = "desconocido"
     
+    # Validación de ondas
+    is_valid_wave: bool = False            # ¿Se detectó onda real?
+    periodicity_score: float = 0.0         # Puntuación de periodicidad (0-1)
+    validation_message: str = ""           # Mensaje explicativo
+    rejection_reasons: Optional[List[str]] = None  # Razones de rechazo
+    
     # Comparación teórica
     wavelength_theoretical_mm: Optional[float] = None
     error_percent: Optional[float] = None
@@ -58,6 +72,10 @@ class WaveAnalysisResult:
             "snr": self.snr,
             "confidence": self.confidence,
             "quality": self.quality,
+            "is_valid_wave": self.is_valid_wave,
+            "periodicity_score": self.periodicity_score,
+            "validation_message": self.validation_message,
+            "rejection_reasons": self.rejection_reasons,
             "wavelength_theoretical_mm": self.wavelength_theoretical_mm,
             "error_percent": self.error_percent,
             "freq_x": self.freq_x,
@@ -177,6 +195,86 @@ class WaveAnalyzer:
         freq_y = dist_y / h  # ciclos/píxel
 
         return freq_x, freq_y, peak_value, peak_idx
+
+    def validate_periodicity(self, spectrum: np.ndarray, peak_position: Tuple[int, int]) -> Tuple[float, List[str]]:
+        """
+        Valida si hay periodicidad real en la imagen analizando el espectro.
+        
+        Criterios:
+        1. El pico debe ser significativamente mayor que el ruido de fondo
+        2. Debe haber armónicos (picos secundarios en múltiplos de la frecuencia)
+        3. El pico debe estar localizado (no disperso)
+        
+        Returns:
+            (periodicity_score, list_of_issues)
+        """
+        h, w = spectrum.shape
+        center_y, center_x = h // 2, w // 2
+        py, px = peak_position
+        
+        issues = []
+        score = 1.0
+        
+        # 1. Verificar que el pico no sea ruido
+        peak_value = spectrum[py, px]
+        
+        # Calcular ruido de fondo (mediana del espectro, excluyendo centro)
+        mask = np.ones_like(spectrum, dtype=bool)
+        mask[center_y-10:center_y+10, center_x-10:center_x+10] = False
+        noise_level = np.median(spectrum[mask])
+        noise_std = np.std(spectrum[mask])
+        
+        # El pico debe ser al menos 3 sigma sobre el ruido
+        if peak_value < noise_level + 3 * noise_std:
+            issues.append("Pico no distinguible del ruido de fondo")
+            score *= 0.3
+        
+        # 2. Verificar localización del pico (FWHM pequeño)
+        margin = 15
+        profile_x = spectrum[py, max(0, px-margin):min(w, px+margin+1)]
+        profile_y = spectrum[max(0, py-margin):min(h, py+margin+1), px]
+        
+        def check_peak_sharpness(profile):
+            if len(profile) < 3:
+                return False, "Perfil muy corto"
+            max_val = np.max(profile)
+            half_max = max_val / 2
+            above_half = np.sum(profile > half_max)
+            # Un pico bien definido debe ser angosto
+            return above_half < len(profile) * 0.5, f"Ancho: {above_half}/{len(profile)}"
+        
+        sharp_x, _ = check_peak_sharpness(profile_x)
+        sharp_y, _ = check_peak_sharpness(profile_y)
+        
+        if not (sharp_x and sharp_y):
+            issues.append("Pico muy disperso (no hay frecuencia dominante clara)")
+            score *= 0.5
+        
+        # 3. Verificar que no sea imagen uniforme (DC dominante)
+        dc_region = spectrum[center_y-3:center_y+4, center_x-3:center_x+4]
+        dc_power = np.sum(dc_region)
+        total_power = np.sum(spectrum)
+        
+        if dc_power > 0.9 * total_power:
+            issues.append("Imagen casi uniforme (sin variación espacial)")
+            score *= 0.1
+        
+        # 4. Verificar distribución de energía en el espectro
+        # Si la energía está muy concentrada en bajas frecuencias, probablemente no hay ondas
+        y, x = np.ogrid[:h, :w]
+        distance = np.sqrt((x - center_x)**2 + (y - center_y)**2)
+        
+        low_freq_mask = distance < min(h, w) * 0.1
+        mid_freq_mask = (distance >= min(h, w) * 0.1) & (distance < min(h, w) * 0.3)
+        
+        low_freq_energy = np.sum(spectrum[low_freq_mask])
+        mid_freq_energy = np.sum(spectrum[mid_freq_mask])
+        
+        if mid_freq_energy < low_freq_energy * 0.01:
+            issues.append("Sin patrones periódicos detectables")
+            score *= 0.2
+        
+        return max(0.0, min(1.0, score)), issues
     
     def estimate_frequency_uncertainty(
         self,
@@ -310,6 +408,47 @@ class WaveAnalyzer:
             result.quality = "marginal"
         else:
             result.quality = "pobre"
+        
+        # ========== VALIDACIÓN DE ONDAS REALES ==========
+        rejection_reasons = []
+        
+        # Validar periodicidad
+        periodicity_score, periodicity_issues = self.validate_periodicity(spectrum, peak_pos)
+        result.periodicity_score = periodicity_score
+        rejection_reasons.extend(periodicity_issues)
+        
+        # Verificar SNR mínimo
+        if result.snr < MIN_SNR_THRESHOLD:
+            rejection_reasons.append(f"SNR muy bajo ({result.snr:.1f} < {MIN_SNR_THRESHOLD})")
+        
+        # Verificar confianza mínima
+        if result.confidence < MIN_CONFIDENCE_THRESHOLD:
+            rejection_reasons.append(f"Confianza muy baja ({result.confidence:.1%} < {MIN_CONFIDENCE_THRESHOLD:.0%})")
+        
+        # Verificar longitud de onda física razonable
+        if wavelength_px < MIN_WAVELENGTH_PX:
+            rejection_reasons.append(f"Longitud de onda menor al límite de Nyquist ({wavelength_px:.1f} < {MIN_WAVELENGTH_PX} px)")
+        
+        # Verificar que λ no sea mayor que la imagen (artefacto)
+        img_size = min(processed.shape) * downsample
+        if wavelength_px > img_size * MAX_WAVELENGTH_RATIO:
+            rejection_reasons.append(f"Longitud de onda demasiado grande (>{MAX_WAVELENGTH_RATIO:.0%} de la imagen)")
+        
+        # Determinar si es onda válida
+        result.is_valid_wave = (
+            len(rejection_reasons) == 0 and 
+            periodicity_score >= MIN_PERIODICITY_SCORE and
+            result.snr >= MIN_SNR_THRESHOLD
+        )
+        
+        result.rejection_reasons = rejection_reasons if rejection_reasons else None
+        
+        if result.is_valid_wave:
+            result.validation_message = f"✅ Onda detectada con confianza {result.confidence:.0%}"
+        elif rejection_reasons:
+            result.validation_message = f"⚠️ Análisis no confiable: {'; '.join(rejection_reasons[:2])}"
+        else:
+            result.validation_message = "❌ No se detectaron ondas en la imagen"
 
         # Comparación con teoría si hay frecuencia de excitación
         if excitation_frequency_hz and self._wave_theory:

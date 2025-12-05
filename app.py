@@ -440,13 +440,17 @@ def analyze_frame(frame: np.ndarray, timestamp: float = 0.0) -> dict:
     interference_analyzer = InterferenceAnalyzer()
     interference_result = interference_analyzer.analyze_interference(gray)
 
-    # Convertir resultado a dict compatible
+    # Convertir resultado a dict compatible con campos de validación
     fft_dict = fft_result.to_dict() if hasattr(fft_result, 'to_dict') else {
         "wavelength_mm": fft_result.wavelength_mm,
         "wavelength_uncertainty_mm": fft_result.wavelength_uncertainty_mm,
         "snr": fft_result.snr,
         "confidence": fft_result.confidence,
         "quality": fft_result.quality,
+        "is_valid_wave": getattr(fft_result, 'is_valid_wave', False),
+        "periodicity_score": getattr(fft_result, 'periodicity_score', 0.0),
+        "validation_message": getattr(fft_result, 'validation_message', ''),
+        "rejection_reasons": getattr(fft_result, 'rejection_reasons', None),
         "wavelength_theoretical_mm": fft_result.wavelength_theoretical_mm,
         "error_percent": fft_result.error_percent,
         "spectrum": fft_result.spectrum
@@ -676,18 +680,51 @@ if st.session_state.frames_buffer:
         st.markdown("### 📈 Métricas Principales")
         fft = result["fft_result"]
         
-        # Métrica principal con incertidumbre
-        if fft.get('wavelength_mm'):
-            uncertainty = fft.get('wavelength_uncertainty_mm', 0)
+        # Mostrar mensaje de validación prominente
+        is_valid = fft.get('is_valid_wave', False)
+        validation_msg = fft.get('validation_message', '')
+        
+        if not is_valid:
             st.markdown(f"""
-            <div class='info-card' style='border-left-color: #11998e;'>
-                <h2 style='color: #11998e; margin: 0;'>🌊 {fft['wavelength_mm']:.2f} ± {uncertainty:.2f} mm</h2>
-                <p style='color: #666; margin: 5px 0 0 0;'>Longitud de Onda Experimental</p>
+            <div class='info-card' style='border-left-color: #f5576c; background: rgba(245, 87, 108, 0.1);'>
+                <h4 style='color: #f5576c; margin: 0;'>⚠️ Análisis No Confiable</h4>
+                <p style='color: #666; margin: 10px 0 0 0; font-size: 0.9em;'>{validation_msg}</p>
             </div>
             """, unsafe_allow_html=True)
             
-            # Comparación con teoría
-            if fft.get('wavelength_theoretical_mm'):
+            # Mostrar razones de rechazo si existen
+            rejection_reasons = fft.get('rejection_reasons', [])
+            if rejection_reasons:
+                with st.expander("🔍 Ver detalles del análisis"):
+                    st.markdown("**Problemas detectados:**")
+                    for reason in rejection_reasons:
+                        st.markdown(f"- {reason}")
+                    st.markdown("")
+                    st.caption("Los valores mostrados abajo son estimaciones no confiables.")
+        
+        # Métrica principal con incertidumbre
+        if fft.get('wavelength_mm'):
+            uncertainty = fft.get('wavelength_uncertainty_mm', 0)
+            
+            # Color según validez
+            if is_valid:
+                border_color = '#11998e'
+                title_color = '#11998e'
+                status_icon = '🌊'
+            else:
+                border_color = '#ffb800'
+                title_color = '#ffb800'
+                status_icon = '❓'
+            
+            st.markdown(f"""
+            <div class='info-card' style='border-left-color: {border_color};'>
+                <h2 style='color: {title_color}; margin: 0;'>{status_icon} {fft['wavelength_mm']:.2f} ± {uncertainty:.2f} mm</h2>
+                <p style='color: #666; margin: 5px 0 0 0;'>Longitud de Onda {'Detectada' if is_valid else '(No Confirmada)'}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Comparación con teoría (solo si es válido)
+            if fft.get('wavelength_theoretical_mm') and is_valid:
                 theoretical = fft['wavelength_theoretical_mm']
                 error = fft.get('error_percent', 0)
                 error_color = '#11998e' if error < 5 else '#ffb800' if error < 15 else '#f5576c'
@@ -695,6 +732,14 @@ if st.session_state.frames_buffer:
                 <div class='info-card' style='border-left-color: {error_color};'>
                     <p style='margin: 0;'>λ teórica: <strong>{theoretical:.2f} mm</strong></p>
                     <p style='margin: 5px 0 0 0; color: {error_color};'>Error: <strong>{error:.1f}%</strong></p>
+                </div>
+                """, unsafe_allow_html=True)
+            elif fft.get('wavelength_theoretical_mm') and not is_valid:
+                theoretical = fft['wavelength_theoretical_mm']
+                st.markdown(f"""
+                <div class='info-card' style='border-left-color: #999;'>
+                    <p style='margin: 0; color: #999;'>λ teórica: <strong>{theoretical:.2f} mm</strong></p>
+                    <p style='margin: 5px 0 0 0; color: #999;'>Comparación no disponible (análisis no válido)</p>
                 </div>
                 """, unsafe_allow_html=True)
         else:
@@ -711,6 +756,10 @@ if st.session_state.frames_buffer:
         with col_conf:
             st.metric("🎯 Confianza", f"{fft.get('confidence', 0):.0%}")
         
+        # Indicador de periodicidad
+        periodicity = fft.get('periodicity_score', 0)
+        st.progress(periodicity, text=f"Periodicidad: {periodicity:.0%}")
+        
         # Calidad de medición
         quality = fft.get('quality', 'desconocido')
         quality_colors = {
@@ -718,7 +767,8 @@ if st.session_state.frames_buffer:
             'bueno': 'badge-success', 
             'aceptable': 'badge-warning',
             'marginal': 'badge-warning',
-            'pobre': 'badge-info'
+            'pobre': 'badge-info',
+            'sin_señal': 'badge-info'
         }
         badge_class = quality_colors.get(quality, 'badge-info')
         st.markdown(f"<span class='badge {badge_class}'>Calidad: {quality.capitalize()}</span>", unsafe_allow_html=True)
@@ -764,6 +814,8 @@ if st.session_state.frames_buffer:
     
     with tab2:
         interference_result = result["interference_result"]
+        is_real_interference = interference_result.get('is_real_interference', False)
+        interference_validation_msg = interference_result.get('validation_message', '')
         
         st.markdown("""
         <div class='info-card'>
@@ -771,26 +823,43 @@ if st.session_state.frames_buffer:
         </div>
         """, unsafe_allow_html=True)
         
+        # Mostrar estado de validación
+        if not is_real_interference:
+            st.warning(f"⚠️ {interference_validation_msg}")
+        else:
+            st.success(interference_validation_msg)
+        
         col_c, col_d = st.columns(2)
         with col_c:
             st.markdown("**Características detectadas:**")
-            st.markdown(f"- Franjas: `{interference_result['num_fringes']}`")
-            st.markdown(f"- Contraste: `{interference_result['contrast']:.3f}`")
-            st.markdown(f"- Visibilidad: `{interference_result['visibility']}`")
+            st.markdown(f"- Franjas válidas: `{interference_result.get('num_fringes', 0)}`")
+            st.markdown(f"- Contraste: `{interference_result.get('contrast', 0):.3f}`")
+            st.markdown(f"- Visibilidad: `{interference_result.get('visibility', 'N/A')}`")
+            
+            # Mostrar regularidad si está disponible
+            regularity = interference_result.get('regularity_score', 0)
+            if regularity > 0:
+                st.markdown(f"- Regularidad: `{regularity:.0%}`")
         
         with col_d:
-            if interference_result.get('spacing_px'):
+            if interference_result.get('spacing_px') and is_real_interference:
                 st.markdown("**Espaciado:**")
                 st.markdown(f"- `{interference_result['spacing_px']:.2f}` píxeles")
+                if interference_result.get('std_spacing'):
+                    st.markdown(f"- Desv. est.: `±{interference_result['std_spacing']:.2f}` px")
                 
                 # Indicador visual de calidad
-                contrast = interference_result['contrast']
+                contrast = interference_result.get('contrast', 0)
                 if contrast > 0.5:
                     st.markdown("<span class='badge badge-success'>✓ Alta calidad</span>", unsafe_allow_html=True)
                 elif contrast > 0.3:
                     st.markdown("<span class='badge badge-warning'>⚠ Calidad media</span>", unsafe_allow_html=True)
                 else:
                     st.markdown("<span class='badge badge-info'>ℹ Baja calidad</span>", unsafe_allow_html=True)
+            elif not is_real_interference:
+                st.markdown("**Espaciado:**")
+                st.markdown("_No calculable - patrón no válido_")
+                st.markdown("<span class='badge badge-info'>ℹ Análisis no confiable</span>", unsafe_allow_html=True)
     
     with tab3:
         st.markdown("""
