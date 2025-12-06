@@ -20,47 +20,103 @@ class InterferenceAnalyzer:
     def __init__(self):
         self.logger = logging.getLogger('InterferenceAnalyzer')
 
+        def classify_pattern_type(self, image: np.ndarray) -> str:
+            """
+            Clasifica el tipo de patrón: 'ondas circulares' (una fuente), 'interferencia' (múltiples fuentes) o 'no identificado'.
+            """
+            try:
+                import cv2
+            except ImportError:
+                return "No disponible (falta OpenCV)"
+
+            img = image.copy()
+            if len(img.shape) == 3:
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            img = cv2.medianBlur(img, 5)
+
+            rows = img.shape[0]
+            circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, dp=1.2, minDist=rows//8,
+                                       param1=50, param2=30, minRadius=5, maxRadius=rows//2)
+
+            # Si detecta al menos un círculo grande y concéntrico cerca del centro, es ondas circulares
+            if circles is not None:
+                circles = np.uint16(np.around(circles))
+                # Buscar círculo más cercano al centro
+                center_x, center_y = img.shape[1] // 2, img.shape[0] // 2
+                for c in circles[0, :]:
+                    dist = np.sqrt((c[0] - center_x)**2 + (c[1] - center_y)**2)
+                    if dist < min(img.shape) * 0.2:
+                        return "ondas circulares (una fuente)"
+                if len(circles[0]) > 1:
+                    return "interferencia (múltiples fuentes)"
+            return "patrón no identificado"
     def detect_fringes(self, image: np.ndarray, threshold: float = 0.5) -> Tuple[np.ndarray, int, List[dict]]:
         """
-        Detecta franjas en imagen con validación de tamaño.
-        
-        Args:
-            image: Imagen en escala de grises (0-255)
-            threshold: Umbral para binarización (0-1)
-        
-        Returns:
-            (imagen_etiquetada, num_franjas_validas, info_franjas)
+        Detecta franjas en imagen, ahora soporta círculos concéntricos como franjas válidas.
         """
-        # Normalizar
-        img_norm = image.astype(np.float32) / 255.0
+        try:
+            import cv2
+        except ImportError:
+            # Fallback al método anterior si no hay OpenCV
+            return self._detect_fringes_basic(image, threshold)
 
-        # Binarizar
-        threshold_val = np.mean(img_norm) + threshold * np.std(img_norm)
-        binary = (img_norm > threshold_val).astype(np.uint8)
+        img_norm = image.astype(np.uint8)
+        img_blur = cv2.medianBlur(img_norm, 5)
+        rows = img_blur.shape[0]
+        circles = cv2.HoughCircles(img_blur, cv2.HOUGH_GRADIENT, dp=1.2, minDist=rows//16,
+                                   param1=50, param2=30, minRadius=5, maxRadius=rows//2)
 
-        # Contar regiones conectadas (franjas potenciales)
-        labeled, num_features = ndimage.label(binary)
-        
-        # Filtrar franjas por tamaño mínimo (evitar ruido)
-        min_fringe_area = image.shape[0] * image.shape[1] * 0.001  # 0.1% de la imagen
-        min_fringe_length = min(image.shape) * 0.1  # 10% de dimensión menor
-        
         valid_fringes = []
         valid_count = 0
-        
+        labeled = np.zeros_like(img_blur)
+
+        if circles is not None:
+            circles = np.uint16(np.around(circles))
+            # Filtrar círculos concéntricos cerca del centro
+            center_x, center_y = img_blur.shape[1] // 2, img_blur.shape[0] // 2
+            concentric = []
+            for c in circles[0, :]:
+                dist = np.sqrt((c[0] - center_x)**2 + (c[1] - center_y)**2)
+                if dist < min(img_blur.shape) * 0.2:
+                    concentric.append(c)
+            # Ordenar por radio
+            concentric = sorted(concentric, key=lambda x: x[2])
+            valid_count = len(concentric)
+            for idx, c in enumerate(concentric):
+                valid_fringes.append({
+                    'id': idx+1,
+                    'center_x': c[0],
+                    'center_y': c[1],
+                    'radius': c[2]
+                })
+                cv2.circle(labeled, (c[0], c[1]), c[2], (idx+1), 2)
+        else:
+            # Si no hay círculos, usar método básico
+            return self._detect_fringes_basic(image, threshold)
+
+        return labeled, valid_count, valid_fringes
+
+    def _detect_fringes_basic(self, image: np.ndarray, threshold: float = 0.5) -> Tuple[np.ndarray, int, List[dict]]:
+        """
+        Método original para detectar franjas lineales (fallback).
+        """
+        img_norm = image.astype(np.float32) / 255.0
+        threshold_val = np.mean(img_norm) + threshold * np.std(img_norm)
+        binary = (img_norm > threshold_val).astype(np.uint8)
+        labeled, num_features = ndimage.label(binary)
+        min_fringe_area = image.shape[0] * image.shape[1] * 0.001
+        min_fringe_length = min(image.shape) * 0.1
+        valid_fringes = []
+        valid_count = 0
         for i in range(1, num_features + 1):
             mask = (labeled == i)
             area = np.sum(mask)
-            
             if area >= min_fringe_area:
-                # Verificar que sea alargada (como una franja)
                 y_indices, x_indices = np.where(mask)
                 if len(y_indices) > 0:
                     height = np.max(y_indices) - np.min(y_indices) + 1
                     width = np.max(x_indices) - np.min(x_indices) + 1
                     aspect_ratio = max(height, width) / (min(height, width) + 1)
-                    
-                    # Una franja debe ser alargada (aspect ratio > 2)
                     if aspect_ratio > 2 and max(height, width) >= min_fringe_length:
                         valid_count += 1
                         valid_fringes.append({
@@ -70,7 +126,6 @@ class InterferenceAnalyzer:
                             'center_y': np.mean(y_indices),
                             'aspect_ratio': aspect_ratio
                         })
-
         return labeled, valid_count, valid_fringes
 
     def estimate_fringe_spacing(self, image: np.ndarray) -> Dict:
@@ -214,6 +269,18 @@ class InterferenceAnalyzer:
         else:
             validation_message = "❌ No se detectó patrón de interferencia"
 
+            # Clasificación del tipo de patrón
+            pattern_type = self.classify_pattern_type(image)
+
+            return {
+                **fringe_info,
+                "contrast": contrast,
+                "contrast_valid": contrast_valid,
+                "visibility": visibility,
+                "is_real_interference": is_real_interference,
+                "validation_message": validation_message,
+                "pattern_type": pattern_type
+            }
         return {
             **fringe_info,
             "contrast": contrast,

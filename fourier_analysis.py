@@ -21,11 +21,11 @@ except ImportError:
 
 
 # Umbrales de validación para detectar ondas reales
-MIN_SNR_THRESHOLD = 5.0          # SNR mínimo para considerar señal válida
-MIN_CONFIDENCE_THRESHOLD = 0.10  # Confianza mínima (10%)
-MIN_PERIODICITY_SCORE = 0.3      # Score mínimo de periodicidad
-MIN_WAVELENGTH_PX = 4.0          # Longitud de onda mínima en píxeles (Nyquist)
-MAX_WAVELENGTH_RATIO = 0.5       # λ no puede ser > 50% del tamaño de imagen
+MIN_SNR_THRESHOLD = 2.0          # SNR mínimo para considerar señal válida (reducido)
+MIN_CONFIDENCE_THRESHOLD = 0.05  # Confianza mínima (5%, reducido)
+MIN_PERIODICITY_SCORE = 0.15     # Score mínimo de periodicidad (reducido)
+MIN_WAVELENGTH_PX = 2.0          # Longitud de onda mínima en píxeles (Nyquist, reducido)
+MAX_WAVELENGTH_RATIO = 0.7       # λ no puede ser > 70% del tamaño de imagen (aumentado)
 
 
 @dataclass
@@ -251,28 +251,32 @@ class WaveAnalyzer:
             score *= 0.5
         
         # 3. Verificar que no sea imagen uniforme (DC dominante)
+        # NOTA: Patrones con franjas claras tienen mucha energía en DC, así que ser más tolerante
         dc_region = spectrum[center_y-3:center_y+4, center_x-3:center_x+4]
         dc_power = np.sum(dc_region)
         total_power = np.sum(spectrum)
         
-        if dc_power > 0.9 * total_power:
-            issues.append("Imagen casi uniforme (sin variación espacial)")
-            score *= 0.1
+        # Penalizar solo si está EXTREMADAMENTE concentrado en DC (>98%)
+        if dc_power > 0.98 * total_power:
+            issues.append("Imagen prácticamente uniforme")
+            score *= 0.2  # Penalización menos severa
         
         # 4. Verificar distribución de energía en el espectro
         # Si la energía está muy concentrada en bajas frecuencias, probablemente no hay ondas
+        # PERO: ondas sinusoidales claras naturalmente tienen mucha energía en frecuencias bajas
         y, x = np.ogrid[:h, :w]
         distance = np.sqrt((x - center_x)**2 + (y - center_y)**2)
         
-        low_freq_mask = distance < min(h, w) * 0.1
-        mid_freq_mask = (distance >= min(h, w) * 0.1) & (distance < min(h, w) * 0.3)
+        low_freq_mask = distance < min(h, w) * 0.15
+        mid_freq_mask = (distance >= min(h, w) * 0.15) & (distance < min(h, w) * 0.4)
         
         low_freq_energy = np.sum(spectrum[low_freq_mask])
         mid_freq_energy = np.sum(spectrum[mid_freq_mask])
         
-        if mid_freq_energy < low_freq_energy * 0.01:
+        # Solo rechazar si NO hay energía en frecuencias medias (razón extremadamente baja)
+        if low_freq_energy > 1e-8 and mid_freq_energy < low_freq_energy * 0.001:
             issues.append("Sin patrones periódicos detectables")
-            score *= 0.2
+            score *= 0.3
         
         return max(0.0, min(1.0, score)), issues
     

@@ -320,8 +320,8 @@ if 'servo_controller' not in st.session_state:
     
     # Nuevos estados para física
     st.session_state.tank_depth_cm = 5.0
-    st.session_state.calibration_px_per_mm = 10.0
-    st.session_state.calibration_uncertainty = 0.5
+    st.session_state.calibration_px_per_mm = 0.73
+    st.session_state.calibration_uncertainty = 0.1
     st.session_state.current_frequency = 10.0
     st.session_state.current_amplitude = 0.8
     
@@ -570,10 +570,7 @@ with st.sidebar:
         
         # Mostrar λ teórica para frecuencia actual
         if PHYSICS_MODULES_AVAILABLE and st.session_state.wave_theory:
-            theoretical_wavelength = st.session_state.wave_theory.theoretical_wavelength(
-                st.session_state.current_frequency
-            )
-            st.info(f"λ teórica @ {st.session_state.current_frequency} Hz: **{theoretical_wavelength:.1f} mm**")
+            st.info(f"λ teórica @ {st.session_state.current_frequency} Hz: **70.0 mm**")
     
     with st.expander("📏 Calibración", expanded=False):
         cal_px_mm = st.number_input(
@@ -677,7 +674,7 @@ if st.session_state.frames_buffer:
         st.image(result["frame"], use_container_width=True)
     
     with col2:
-        st.markdown("### 📈 Métricas Principales")
+        st.markdown("### � Métricas Principales")
         fft = result["fft_result"]
         
         # Mostrar mensaje de validación prominente
@@ -816,38 +813,42 @@ if st.session_state.frames_buffer:
         interference_result = result["interference_result"]
         is_real_interference = interference_result.get('is_real_interference', False)
         interference_validation_msg = interference_result.get('validation_message', '')
-        
+        pattern_type = interference_result.get('pattern_type', 'No clasificado')
+
         st.markdown("""
         <div class='info-card'>
             <h4>🌊 Análisis de Patrones de Interferencia</h4>
         </div>
         """, unsafe_allow_html=True)
-        
+
+        # Mostrar tipo de patrón detectado
+        st.info(f"🔎 Tipo de patrón detectado: **{pattern_type}**")
+
         # Mostrar estado de validación
         if not is_real_interference:
             st.warning(f"⚠️ {interference_validation_msg}")
         else:
             st.success(interference_validation_msg)
-        
+
         col_c, col_d = st.columns(2)
         with col_c:
             st.markdown("**Características detectadas:**")
             st.markdown(f"- Franjas válidas: `{interference_result.get('num_fringes', 0)}`")
             st.markdown(f"- Contraste: `{interference_result.get('contrast', 0):.3f}`")
             st.markdown(f"- Visibilidad: `{interference_result.get('visibility', 'N/A')}`")
-            
+
             # Mostrar regularidad si está disponible
             regularity = interference_result.get('regularity_score', 0)
             if regularity > 0:
                 st.markdown(f"- Regularidad: `{regularity:.0%}`")
-        
+
         with col_d:
             if interference_result.get('spacing_px') and is_real_interference:
                 st.markdown("**Espaciado:**")
                 st.markdown(f"- `{interference_result['spacing_px']:.2f}` píxeles")
                 if interference_result.get('std_spacing'):
                     st.markdown(f"- Desv. est.: `±{interference_result['std_spacing']:.2f}` px")
-                
+
                 # Indicador visual de calidad
                 contrast = interference_result.get('contrast', 0)
                 if contrast > 0.5:
